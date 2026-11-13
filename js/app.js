@@ -144,6 +144,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function init() {
         renderVariableCategories();
         initMap();
+        initMapSearch();
+        init3DGlobe();
         initTimeControls();
         initDemoExamples();
         setupEventListeners();
@@ -290,13 +292,24 @@ document.addEventListener('DOMContentLoaded', () => {
         state.selectedLat = Math.round(lat * 100) / 100;
         state.selectedLon = Math.round(lon * 100) / 100;
 
+        const locName = getRegionDisplayName(state.selectedLat, state.selectedLon);
+        const popupHtml = `
+            <div class="marker-popup-content">
+                <div class="marker-popup-title">${locName}</div>
+                <div class="marker-popup-coords">${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'}</div>
+                <button class="popup-3d-btn" onclick="document.getElementById('open-3d-btn').click()">🌐 3D & 360° View</button>
+            </div>
+        `;
+
         // Update marker
         if (state.marker) {
             state.marker.setLatLng([lat, lon]);
+            state.marker.setPopupContent(popupHtml);
         } else {
             state.marker = L.marker([lat, lon], {
                 draggable: true,
             }).addTo(state.map);
+            state.marker.bindPopup(popupHtml);
             state.marker.on('dragend', (e) => {
                 const pos = e.target.getLatLng();
                 setLocation(pos.lat, pos.lng);
@@ -309,9 +322,418 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Update location display
         document.getElementById('selected-location').textContent =
-            `${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'}`;
+            `${locName} (${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'})`;
+
+        // Enable 3D & 360 view button
+        const open3dBtn = document.getElementById('open-3d-btn');
+        if (open3dBtn) open3dBtn.disabled = false;
+
+        // Update Google Earth 3D link
+        const earthLink = document.getElementById('google-earth-link');
+        if (earthLink) {
+            earthLink.href = `https://earth.google.com/web/@${state.selectedLat},${state.selectedLon},2000a,35d,35y,0h,0t,0r`;
+        }
+
+        // If 3D Globe modal is currently open, update pin position immediately
+        if (typeof updateGlobePin === 'function') {
+            updateGlobePin();
+        }
 
         updateSelectionSummary();
+    }
+
+    // ============================================================
+    // REGION HELPER & MAP SEARCH (Nominatim Geocoding)
+    // ============================================================
+
+    function getRegionDisplayName(lat, lon) {
+        const matchedPreset = PRESET_REGIONS.find(r =>
+            Math.abs(r.lat - lat) < 1 && Math.abs(r.lon - lon) < 1
+        );
+        if (matchedPreset) return matchedPreset.name;
+
+        const searchInput = document.getElementById('map-search-input');
+        if (searchInput && searchInput.value.trim()) {
+            return searchInput.value.trim().split(',')[0];
+        }
+
+        return `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(2)}°${lon >= 0 ? 'E' : 'W'}`;
+    }
+
+    function initMapSearch() {
+        const searchInput = document.getElementById('map-search-input');
+        const searchBtn = document.getElementById('map-search-btn');
+        const searchClear = document.getElementById('map-search-clear');
+        const searchResults = document.getElementById('map-search-results');
+
+        if (!searchInput || !searchBtn) return;
+
+        let debounceTimer = null;
+
+        searchInput.addEventListener('input', () => {
+            const query = searchInput.value.trim();
+            if (query.length > 0) {
+                searchClear.style.display = 'flex';
+            } else {
+                searchClear.style.display = 'none';
+                searchResults.style.display = 'none';
+                return;
+            }
+
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                if (query.length >= 2) performSearch(query);
+            }, 350);
+        });
+
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const query = searchInput.value.trim();
+                if (query) performSearch(query, true);
+            } else if (e.key === 'Escape') {
+                searchResults.style.display = 'none';
+            }
+        });
+
+        searchBtn.addEventListener('click', () => {
+            const query = searchInput.value.trim();
+            if (query) performSearch(query, true);
+        });
+
+        searchClear.addEventListener('click', () => {
+            searchInput.value = '';
+            searchClear.style.display = 'none';
+            searchResults.style.display = 'none';
+            searchInput.focus();
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.map-search-bar')) {
+                searchResults.style.display = 'none';
+            }
+        });
+
+        async function performSearch(query, autoSelectFirst = false) {
+            try {
+                searchResults.innerHTML = '<div class="search-result-item"><span class="item-icon">⏳</span><span class="item-text">Searching locations...</span></div>';
+                searchResults.style.display = 'block';
+
+                const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(query)}`;
+                const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+                if (!res.ok) throw new Error('Search request failed');
+                const data = await res.json();
+
+                if (!data || data.length === 0) {
+                    searchResults.innerHTML = '<div class="search-result-item"><span class="item-icon">❌</span><span class="item-text">No matching locations found</span></div>';
+                    return;
+                }
+
+                if (autoSelectFirst && data.length > 0) {
+                    selectLocationResult(data[0]);
+                    searchResults.style.display = 'none';
+                    return;
+                }
+
+                searchResults.innerHTML = data.map((item, idx) => `
+                    <div class="search-result-item" data-idx="${idx}">
+                        <span class="item-icon">📍</span>
+                        <span class="item-text" title="${item.display_name}">${item.display_name}</span>
+                    </div>
+                `).join('');
+
+                searchResults.querySelectorAll('.search-result-item').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const idx = parseInt(el.dataset.idx);
+                        if (!isNaN(idx) && data[idx]) {
+                            selectLocationResult(data[idx]);
+                            searchResults.style.display = 'none';
+                        }
+                    });
+                });
+            } catch (err) {
+                console.warn('Geocoding error:', err);
+                searchResults.innerHTML = '<div class="search-result-item"><span class="item-icon">⚠️</span><span class="item-text">Search temporarily unavailable</span></div>';
+            }
+        }
+
+        function selectLocationResult(item) {
+            const lat = parseFloat(item.lat);
+            const lon = parseFloat(item.lon);
+            if (isNaN(lat) || isNaN(lon)) return;
+
+            setLocation(lat, lon);
+            state.map.flyTo([lat, lon], 6, { duration: 1.5 });
+            searchInput.value = item.display_name.split(',')[0];
+            searchClear.style.display = 'flex';
+            showNotification(`Selected: ${item.display_name.split(',')[0]}`, 'info');
+        }
+    }
+
+    // ============================================================
+    // 3D GLOBE & 360° ORBIT VIEW (Three.js)
+    // ============================================================
+
+    let globeScene = null, globeCamera = null, globeRenderer = null, globeControls = null;
+    let earthMesh = null, pinMesh = null;
+    let isGlobeAutoRotate = true;
+    let globeAnimId = null;
+
+    function updateGlobePin() {
+        if (!globeScene || state.selectedLat === null || state.selectedLon === null) return;
+
+        if (pinMesh) {
+            globeScene.remove(pinMesh);
+            pinMesh = null;
+        }
+
+        const lat = state.selectedLat;
+        const lon = state.selectedLon;
+        const radius = 80;
+
+        pinMesh = new THREE.Group();
+
+        // Pin cone
+        const coneGeo = new THREE.ConeGeometry(2.5, 9, 16);
+        coneGeo.translate(0, 4.5, 0);
+        coneGeo.rotateX(Math.PI / 2);
+        const coneMat = new THREE.MeshBasicMaterial({ color: 0xff1744 });
+        const cone = new THREE.Mesh(coneGeo, coneMat);
+
+        // Pin top sphere
+        const sphereGeo = new THREE.SphereGeometry(2.6, 16, 16);
+        const sphereMat = new THREE.MeshBasicMaterial({ color: 0xffea00 });
+        const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+        sphere.position.set(0, 0, 9);
+
+        // Pulsing ground ring
+        const ringGeo = new THREE.RingGeometry(2.5, 4.5, 24);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0x42a5f5, side: THREE.DoubleSide });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+
+        const marker = new THREE.Group();
+        marker.add(cone);
+        marker.add(sphere);
+        marker.add(ring);
+
+        // Spherical to Cartesian math
+        const phi = (90 - lat) * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+        const x = -(radius * Math.sin(phi) * Math.cos(theta));
+        const z = radius * Math.sin(phi) * Math.sin(theta);
+        const y = radius * Math.cos(phi);
+
+        marker.position.set(x, y, z);
+        marker.lookAt(x * 2, y * 2, z * 2);
+
+        pinMesh.add(marker);
+        if (earthMesh) {
+            pinMesh.rotation.y = earthMesh.rotation.y;
+        }
+        globeScene.add(pinMesh);
+    }
+
+    function init3DGlobe() {
+        const openBtn = document.getElementById('open-3d-btn');
+        const modal = document.getElementById('globe-modal');
+        const closeBtn = document.getElementById('globe-modal-close');
+        const rotateBtn = document.getElementById('globe-rotate-btn');
+        const focusBtn = document.getElementById('globe-focus-btn');
+        const resetBtn = document.getElementById('globe-reset-btn');
+        const earthLink = document.getElementById('google-earth-link');
+
+        if (!openBtn || !modal) return;
+
+        openBtn.addEventListener('click', open3DGlobeModal);
+
+        closeBtn?.addEventListener('click', close3DGlobeModal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) close3DGlobeModal();
+        });
+
+        rotateBtn?.addEventListener('click', () => {
+            isGlobeAutoRotate = !isGlobeAutoRotate;
+            rotateBtn.classList.toggle('active', isGlobeAutoRotate);
+            rotateBtn.innerHTML = isGlobeAutoRotate ? '🔄 360° Auto-Rotate: ON' : '⏸️ 360° Auto-Rotate: OFF';
+        });
+
+        focusBtn?.addEventListener('click', () => {
+            focusOnSelectedPin();
+        });
+
+        resetBtn?.addEventListener('click', () => {
+            if (globeControls && globeCamera) {
+                globeCamera.position.set(0, 20, 220);
+                globeControls.target.set(0, 0, 0);
+                globeControls.update();
+            }
+        });
+
+        function open3DGlobeModal() {
+            if (state.selectedLat === null || state.selectedLon === null) {
+                showNotification('Please select a region on the map first.', 'warning');
+                return;
+            }
+
+            modal.style.display = 'flex';
+            const locName = getRegionDisplayName(state.selectedLat, state.selectedLon);
+            const sub = document.getElementById('globe-modal-subtitle');
+            if (sub) {
+                sub.textContent = `${locName} (${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'})`;
+            }
+
+            if (earthLink) {
+                earthLink.href = `https://earth.google.com/web/@${state.selectedLat},${state.selectedLon},2000a,35d,35y,0h,0t,0r`;
+            }
+
+            setTimeout(() => {
+                setupThreeJSGlobe();
+                updateGlobePin();
+                focusOnSelectedPin();
+            }, 60);
+        }
+
+        function close3DGlobeModal() {
+            modal.style.display = 'none';
+            if (globeAnimId) {
+                cancelAnimationFrame(globeAnimId);
+                globeAnimId = null;
+            }
+        }
+
+        function setupThreeJSGlobe() {
+            const container = document.getElementById('globe-canvas-container');
+            if (!container || typeof THREE === 'undefined') return;
+
+            const width = container.clientWidth || 800;
+            const height = container.clientHeight || 500;
+
+            if (!globeRenderer) {
+                // Scene
+                globeScene = new THREE.Scene();
+
+                // Camera
+                globeCamera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+                globeCamera.position.set(0, 20, 220);
+
+                // Renderer
+                globeRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                globeRenderer.setSize(width, height);
+                globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                container.appendChild(globeRenderer.domElement);
+
+                // OrbitControls for 360 degree rotation
+                if (typeof THREE.OrbitControls !== 'undefined') {
+                    globeControls = new THREE.OrbitControls(globeCamera, globeRenderer.domElement);
+                    globeControls.enableDamping = true;
+                    globeControls.dampingFactor = 0.05;
+                    globeControls.minDistance = 105;
+                    globeControls.maxDistance = 420;
+                    globeControls.rotateSpeed = 0.8;
+                }
+
+                // Lighting
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+                globeScene.add(ambientLight);
+
+                const sunLight = new THREE.DirectionalLight(0xffffff, 1.1);
+                sunLight.position.set(400, 250, 400);
+                globeScene.add(sunLight);
+
+                // Earth Sphere (radius = 80)
+                const earthGeo = new THREE.SphereGeometry(80, 64, 64);
+                const textureLoader = new THREE.TextureLoader();
+                const earthTextureUrl = 'https://cdn.jsdelivr.net/npm/three-globe@2.45.6/example/img/earth-blue-marble.jpg';
+                const loadingEl = document.getElementById('globe-loading');
+
+                textureLoader.load(earthTextureUrl, (tex) => {
+                    tex.anisotropy = globeRenderer.capabilities.getMaxAnisotropy();
+                    const earthMat = new THREE.MeshPhongMaterial({
+                        map: tex,
+                        shininess: 15,
+                        specular: new THREE.Color(0x333333),
+                    });
+                    earthMesh = new THREE.Mesh(earthGeo, earthMat);
+                    globeScene.add(earthMesh);
+
+                    // Atmosphere glow
+                    const atmosGeo = new THREE.SphereGeometry(81.2, 64, 64);
+                    const atmosMat = new THREE.MeshLambertMaterial({
+                        color: 0x42a5f5,
+                        transparent: true,
+                        opacity: 0.15,
+                        side: THREE.BackSide,
+                    });
+                    const atmosMesh = new THREE.Mesh(atmosGeo, atmosMat);
+                    globeScene.add(atmosMesh);
+
+                    if (loadingEl) loadingEl.style.display = 'none';
+                    updateGlobePin();
+                }, undefined, () => {
+                    // Fallback
+                    const fallbackMat = new THREE.MeshLambertMaterial({ color: 0x1565c0 });
+                    earthMesh = new THREE.Mesh(earthGeo, fallbackMat);
+                    globeScene.add(earthMesh);
+                    if (loadingEl) loadingEl.style.display = 'none';
+                    updateGlobePin();
+                });
+
+                // Stars
+                const starsGeo = new THREE.BufferGeometry();
+                const starsCount = 1200;
+                const starCoords = new Float32Array(starsCount * 3);
+                for (let i = 0; i < starsCount * 3; i++) {
+                    starCoords[i] = (Math.random() - 0.5) * 1200;
+                }
+                starsGeo.setAttribute('position', new THREE.BufferAttribute(starCoords, 3));
+                const starsMat = new THREE.PointsMaterial({ color: 0xffffff, size: 1.2, transparent: true, opacity: 0.85 });
+                const starField = new THREE.Points(starsGeo, starsMat);
+                globeScene.add(starField);
+            } else {
+                globeCamera.aspect = width / height;
+                globeCamera.updateProjectionMatrix();
+                globeRenderer.setSize(width, height);
+            }
+
+            // Animation Loop
+            function animateGlobe() {
+                globeAnimId = requestAnimationFrame(animateGlobe);
+
+                if (isGlobeAutoRotate && earthMesh) {
+                    earthMesh.rotation.y += 0.002;
+                    if (pinMesh) {
+                        pinMesh.rotation.y = earthMesh.rotation.y;
+                    }
+                }
+
+                if (globeControls) globeControls.update();
+                globeRenderer.render(globeScene, globeCamera);
+            }
+
+            if (!globeAnimId) animateGlobe();
+        }
+
+        function focusOnSelectedPin() {
+            if (!globeCamera || !globeControls || state.selectedLat === null || state.selectedLon === null) return;
+
+            const lat = state.selectedLat;
+            const lon = state.selectedLon;
+            const dist = 180;
+
+            const currentRotY = earthMesh ? earthMesh.rotation.y : 0;
+            const adjustedLon = lon + (currentRotY * 180 / Math.PI);
+
+            const phi = (90 - lat) * (Math.PI / 180);
+            const theta = (adjustedLon + 180) * (Math.PI / 180);
+
+            const targetX = -(dist * Math.sin(phi) * Math.cos(theta));
+            const targetZ = dist * Math.sin(phi) * Math.sin(theta);
+            const targetY = dist * Math.cos(phi);
+
+            globeCamera.position.set(targetX, targetY, targetZ);
+            globeControls.target.set(0, 0, 0);
+            globeControls.update();
+        }
     }
 
     // ============================================================
@@ -1197,6 +1619,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Escape') {
             const glossaryModal = document.getElementById('glossary-modal');
             if (glossaryModal) glossaryModal.style.display = 'none';
+            const globeModal = document.getElementById('globe-modal');
+            if (globeModal) {
+                globeModal.style.display = 'none';
+                if (globeAnimId) {
+                    cancelAnimationFrame(globeAnimId);
+                    globeAnimId = null;
+                }
+            }
         }
     });
 
@@ -1212,8 +1642,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (state.map) {
                 state.map.invalidateSize();
             }
-            // Plotly auto-resizes via responsive:true config
-        }, 250);
+            // Update 3D globe renderer if open
+            const container = document.getElementById('globe-canvas-container');
+            const globeModal = document.getElementById('globe-modal');
+            if (globeModal && globeModal.style.display !== 'none' && container && globeRenderer && globeCamera) {
+                const w = container.clientWidth;
+                const h = container.clientHeight;
+                globeCamera.aspect = w / h;
+                globeCamera.updateProjectionMatrix();
+                globeRenderer.setSize(w, h);
+            }
+        }, 200);
     });
 
     // ============================================================

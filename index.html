@@ -146,9 +146,25 @@
             
             <div class="region-layout">
                 <div class="map-wrapper">
+                    <!-- Map Search Bar -->
+                    <div class="map-search-bar">
+                        <div class="search-input-wrapper">
+                            <span class="search-icon">🔍</span>
+                            <input type="text" id="map-search-input" placeholder="Search city, country, or landmark (e.g. Cairo, Tokyo, London, Amazon)..." autocomplete="off">
+                            <button id="map-search-clear" class="search-clear-btn" style="display:none;" title="Clear search">✕</button>
+                        </div>
+                        <button id="map-search-btn" class="map-search-btn">Search</button>
+                        <div id="map-search-results" class="map-search-results" style="display:none;"></div>
+                    </div>
+
                     <div id="map" class="map-container"></div>
                     <div class="selected-location-display">
-                        📍 Selected: <span id="selected-location">None — click the map</span>
+                        <div class="selected-location-text">
+                            📍 Selected: <span id="selected-location">None — click the map or search</span>
+                        </div>
+                        <button id="open-3d-btn" class="globe-3d-btn" title="Open interactive 3D Globe & 360° Orbit View" disabled>
+                            🌐 3D & 360° View
+                        </button>
                     </div>
                 </div>
                 
@@ -342,6 +358,38 @@
     </div>
 
     <!-- ============================================================ -->
+    <!-- 3D GLOBE & 360° VIEW MODAL -->
+    <!-- ============================================================ -->
+    <div class="modal-overlay" id="globe-modal" style="display:none;">
+        <div class="modal globe-modal-dialog">
+            <div class="modal-header">
+                <div class="globe-modal-header-info">
+                    <h2>🌐 3D Earth & 360° View</h2>
+                    <p class="modal-location-subtitle" id="globe-modal-subtitle">Exploring selected region</p>
+                </div>
+                <button class="modal-close" id="globe-modal-close" aria-label="Close modal">✕</button>
+            </div>
+            <div class="globe-modal-body">
+                <div id="globe-canvas-container" class="globe-canvas-container">
+                    <div id="globe-loading" class="globe-loading">
+                        <div class="spinner"></div>
+                        <span>Rendering 3D Earth...</span>
+                    </div>
+                </div>
+                <div class="globe-controls-bar">
+                    <button id="globe-rotate-btn" class="globe-tool-btn active" title="Toggle 360° Auto-Rotation">🔄 360° Auto-Rotate: ON</button>
+                    <button id="globe-focus-btn" class="globe-tool-btn" title="Focus camera on selected pin">📍 Focus Pin</button>
+                    <button id="globe-reset-btn" class="globe-tool-btn" title="Reset Camera View">⟲ Reset Camera</button>
+                    <a id="google-earth-link" href="#" target="_blank" rel="noopener" class="globe-tool-btn earth-link-btn" title="Fly to this spot in Google Earth 3D">🌍 Open in Google Earth 3D ↗</a>
+                </div>
+                <div class="globe-hint">
+                    💡 <strong>360° Navigation:</strong> Drag with mouse or finger to freely rotate the globe 360°. Scroll or pinch to zoom in/out.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
     <!-- FOOTER -->
     <!-- ============================================================ -->
     <footer class="footer">
@@ -370,6 +418,9 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <!-- Plotly JS -->
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <!-- Three.js & OrbitControls for 3D Earth Globe & 360 View -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <!-- App Modules -->
     <script src="js/stats.js"></script>
     <script src="js/app.js"></script>
