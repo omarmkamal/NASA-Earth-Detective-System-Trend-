@@ -374,23 +374,63 @@
                     <h2>🌐 3D Earth & 360° View</h2>
                     <p class="modal-location-subtitle" id="globe-modal-subtitle">Exploring selected region</p>
                 </div>
+                <div class="globe-mode-switcher" id="globe-mode-switcher">
+                    <button id="mode-orbit-btn" class="globe-mode-tab active" title="View 3D Earth Globe from Orbit">🌍 Orbit Globe</button>
+                    <button id="mode-inside-btn" class="globe-mode-tab" title="Step inside place as 360° 3D immersive view">🏙️ 360° Inside Place</button>
+                </div>
                 <button class="modal-close" id="globe-modal-close" aria-label="Close modal">✕</button>
             </div>
             <div class="globe-modal-body">
                 <div id="globe-canvas-container" class="globe-canvas-container">
                     <div id="globe-loading" class="globe-loading">
                         <div class="spinner"></div>
-                        <span>Rendering 3D Earth...</span>
+                        <span id="globe-loading-text">Rendering 3D Earth...</span>
+                    </div>
+
+                    <!-- Atmospheric Dive / Zoom Surface Prompt -->
+                    <div id="globe-dive-prompt" class="globe-dive-prompt" style="display:none;">
+                        <div class="dive-prompt-content">
+                            <span class="dive-icon">🛬</span>
+                            <span class="dive-text">Approaching Surface!</span>
+                            <button id="dive-enter-inside-btn" class="dive-btn">🏙️ Step Inside 360° Place</button>
+                        </div>
+                    </div>
+
+                    <!-- 360 Inside Place HUD (Biome switcher, Compass & Info) -->
+                    <div id="inside-place-hud" class="inside-place-hud" style="display:none;">
+                        <div class="inside-hud-header">
+                            <div class="inside-hud-title">
+                                <span class="inside-badge-dot"></span>
+                                <span id="inside-hud-location-name">360° Inside Place</span>
+                            </div>
+                            <div class="inside-hud-compass" id="inside-hud-compass">🧭 Facing: <span id="compass-heading">North (0°)</span></div>
+                        </div>
+                        <div class="inside-biome-selector" id="inside-biome-selector">
+                            <span class="biome-selector-label">Environment:</span>
+                            <button class="biome-btn active" data-biome="polar">❄️ Polar</button>
+                            <button class="biome-btn" data-biome="urban">🏙️ Urban</button>
+                            <button class="biome-btn" data-biome="forest">🌲 Forest</button>
+                            <button class="biome-btn" data-biome="desert">🏜️ Desert</button>
+                            <button class="biome-btn" data-biome="mountain">🏔️ Mountain</button>
+                            <button class="biome-btn" data-biome="ocean">🌊 Coastal</button>
+                        </div>
                     </div>
                 </div>
                 <div class="globe-controls-bar">
-                    <button id="globe-rotate-btn" class="globe-tool-btn active" title="Toggle 360° Auto-Rotation">🔄 360° Auto-Rotate: ON</button>
-                    <button id="globe-focus-btn" class="globe-tool-btn" title="Focus camera on selected pin">📍 Focus Pin</button>
-                    <button id="globe-reset-btn" class="globe-tool-btn" title="Reset Camera View">⟲ Reset Camera</button>
-                    <a id="google-earth-link" href="#" target="_blank" rel="noopener" class="globe-tool-btn earth-link-btn" title="Fly to this spot in Google Earth 3D">🌍 Open in Google Earth 3D ↗</a>
+                    <div class="globe-controls-group">
+                        <button id="mode-toggle-action-btn" class="globe-tool-btn highlight-btn" title="Toggle between Orbit and 360° Inside View">🏙️ Switch to 360° Inside</button>
+                        <button id="globe-rotate-btn" class="globe-tool-btn active" title="Toggle 360° Auto-Rotation / Pan">🔄 360° Auto-Pan: ON</button>
+                        <button id="globe-focus-btn" class="globe-tool-btn" title="Focus camera on selected pin">📍 Focus Pin</button>
+                        <button id="globe-zoom-surface-btn" class="globe-tool-btn" title="Zoom deep down into surface">🔍 Zoom Surface</button>
+                        <button id="globe-reset-btn" class="globe-tool-btn" title="Reset Camera View">⟲ Reset Camera</button>
+                    </div>
+                    <div class="globe-controls-group external-links-group">
+                        <a id="google-streetview-link" href="#" target="_blank" rel="noopener" class="globe-tool-btn streetview-link-btn" title="Open Google Street View 360° Photosphere for this coordinate">📷 Street View 360° ↗</a>
+                        <a id="google-earth-link" href="#" target="_blank" rel="noopener" class="globe-tool-btn earth-link-btn" title="Fly to this spot in Google Earth 3D">🌍 Google Earth 3D ↗</a>
+                    </div>
                 </div>
-                <div class="globe-hint">
-                    💡 <strong>360° Navigation:</strong> Drag with mouse or finger to freely rotate the globe 360°. Scroll or pinch to zoom in/out.
+                <div class="globe-hint" id="globe-hint-text">
+                    💡 <strong>Unrestricted 360° Navigation:</strong> Drag to rotate 360°. Scroll or pinch to zoom all the way down to the surface, or click "360° Inside Place" to stand inside!
                 </div>
             </div>
         </div>

@@ -474,13 +474,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    // 3D GLOBE & 360° ORBIT VIEW (Three.js)
+    // 3D GLOBE & 360° INSIDE PLACE VIEW (Three.js Engine)
     // ============================================================
 
     let globeScene = null, globeCamera = null, globeRenderer = null, globeControls = null;
-    let earthMesh = null, pinMesh = null;
+    let earthMesh = null, atmosMesh = null, pinMesh = null, starField = null;
+    let panoMesh = null, panoMaterial = null;
+    let currentViewMode = 'orbit'; // 'orbit' or 'inside'
+    let currentBiome = 'polar';
     let isGlobeAutoRotate = true;
     let globeAnimId = null;
+
+    // 360 First-Person Panorama Interaction State
+    let isUserInteracting = false;
+    let onPointerDownPointerX = 0, onPointerDownPointerY = 0;
+    let onPointerDownLon = 0, onPointerDownLat = 0;
+    let panoLon = 0, panoLat = 0;
+    let panoTargetLon = 0, panoTargetLat = 0;
+    let panoFov = 75;
+    const panoTexturesCache = {};
 
     function updateGlobePin() {
         if (!globeScene || state.selectedLat === null || state.selectedLon === null) return;
@@ -533,7 +545,605 @@ document.addEventListener('DOMContentLoaded', () => {
         if (earthMesh) {
             pinMesh.rotation.y = earthMesh.rotation.y;
         }
+        if (currentViewMode === 'orbit') {
+            pinMesh.visible = true;
+        } else {
+            pinMesh.visible = false;
+        }
         globeScene.add(pinMesh);
+    }
+
+    function detectBiomeForLocation(lat, lon, name) {
+        const lower = (name || '').toLowerCase();
+        if (lat > 65 || lat < -60 || lower.includes('arctic') || lower.includes('polar') || lower.includes('greenland') || lower.includes('svalbard') || lower.includes('antarctica') || lower.includes('glacier') || lower.includes('ice') || lower.includes('tromsø')) {
+            return 'polar';
+        }
+        if (lower.includes('desert') || lower.includes('sahara') || lower.includes('saudi') || lower.includes('egypt') || lower.includes('dubai') || lower.includes('atacama') || lower.includes('kalahari') || lower.includes('arid') || (Math.abs(lat) >= 15 && Math.abs(lat) <= 32 && (lon > -15 && lon < 55))) {
+            return 'desert';
+        }
+        if (lower.includes('amazon') || lower.includes('forest') || lower.includes('congo') || lower.includes('jungle') || lower.includes('rainforest') || lower.includes('woods') || lower.includes('taiga')) {
+            return 'forest';
+        }
+        if (lower.includes('mountain') || lower.includes('alps') || lower.includes('himalaya') || lower.includes('andes') || lower.includes('rocky') || lower.includes('everest') || lower.includes('plateau') || lower.includes('peak') || lower.includes('tibet')) {
+            return 'mountain';
+        }
+        if (lower.includes('beach') || lower.includes('coast') || lower.includes('ocean') || lower.includes('island') || lower.includes('reef') || lower.includes('caribbean') || lower.includes('sea') || lower.includes('bay') || lower.includes('pacific') || lower.includes('atlantic')) {
+            return 'ocean';
+        }
+        if (lower.includes('city') || lower.includes('york') || lower.includes('tokyo') || lower.includes('london') || lower.includes('paris') || lower.includes('cairo') || lower.includes('beijing') || lower.includes('chicago') || lower.includes('sydney') || lower.includes('singapore') || lower.includes('berlin') || lower.includes('madrid') || lower.includes('seoul')) {
+            return 'urban';
+        }
+        if (Math.abs(lat) > 52) return 'mountain';
+        if (Math.abs(lat) < 18) return 'forest';
+        return 'urban';
+    }
+
+    function generateBiomePanoramaTexture(biome, locationName, lat, lon) {
+        const cacheKey = `${biome}_${lat.toFixed(1)}_${lon.toFixed(1)}`;
+        if (panoTexturesCache[cacheKey]) {
+            return panoTexturesCache[cacheKey];
+        }
+
+        const W = 2048;
+        const H = 1024;
+        const canvas = document.createElement('canvas');
+        canvas.width = W;
+        canvas.height = H;
+        const ctx = canvas.getContext('2d');
+
+        const horizonY = H * 0.52;
+
+        // Draw based on selected biome
+        if (biome === 'polar') {
+            // Polar / Arctic Glacier
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+            skyGrad.addColorStop(0, '#0a1d37');
+            skyGrad.addColorStop(0.35, '#1e3c72');
+            skyGrad.addColorStop(0.7, '#64b5f6');
+            skyGrad.addColorStop(1, '#e1f5fe');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, W, horizonY);
+
+            // Subtle Aurora Borealis Ribbon near zenith
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(0, H * 0.18);
+            for (let x = 0; x <= W; x += 32) {
+                const theta = (x / W) * Math.PI * 4;
+                ctx.lineTo(x, H * 0.18 + Math.sin(theta) * 28 + Math.cos(theta * 2) * 14);
+            }
+            ctx.strokeStyle = 'rgba(0, 230, 118, 0.28)';
+            ctx.lineWidth = 45;
+            ctx.filter = 'blur(16px)';
+            ctx.stroke();
+            ctx.restore();
+
+            // Low Polar Sun
+            const sunX = W * 0.35;
+            const sunY = horizonY - 45;
+            const sunGrad = ctx.createRadialGradient(sunX, sunY, 4, sunX, sunY, 180);
+            sunGrad.addColorStop(0, '#ffffff');
+            sunGrad.addColorStop(0.15, '#fff9c4');
+            sunGrad.addColorStop(0.5, 'rgba(255, 236, 179, 0.45)');
+            sunGrad.addColorStop(1, 'rgba(255, 236, 179, 0)');
+            ctx.fillStyle = sunGrad;
+            ctx.beginPath();
+            ctx.arc(sunX, sunY, 180, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Distant Glaciated Mountain Peaks (Seamless 360 wrap)
+            ctx.fillStyle = '#b0bec5';
+            ctx.beginPath();
+            ctx.moveTo(0, horizonY);
+            for (let x = 0; x <= W; x += 4) {
+                const theta = (x / W) * Math.PI * 2;
+                const peak = Math.sin(theta * 6) * 45 + Math.cos(theta * 14) * 25 + Math.sin(theta * 28) * 12;
+                ctx.lineTo(x, horizonY - Math.max(0, peak));
+            }
+            ctx.lineTo(W, horizonY);
+            ctx.closePath();
+            ctx.fill();
+
+            // Snow & Glacier Ice Ground
+            const groundGrad = ctx.createLinearGradient(0, horizonY, 0, H);
+            groundGrad.addColorStop(0, '#e0f7fa');
+            groundGrad.addColorStop(0.2, '#b2ebf2');
+            groundGrad.addColorStop(0.6, '#80deea');
+            groundGrad.addColorStop(1, '#0097a7');
+            ctx.fillStyle = groundGrad;
+            ctx.fillRect(0, horizonY, W, H - horizonY);
+
+            // Glacial blue fissures and wind-blown sastrugi
+            ctx.strokeStyle = 'rgba(0, 151, 167, 0.35)';
+            ctx.lineWidth = 3;
+            for (let y = horizonY + 30; y < H; y += 45) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                for (let x = 0; x <= W; x += 40) {
+                    const theta = (x / W) * Math.PI * 6;
+                    ctx.lineTo(x, y + Math.sin(theta + y * 0.05) * 8);
+                }
+                ctx.stroke();
+            }
+
+            // NASA Polar Research Station Module & Weather Mast
+            drawNASAPolarStation(ctx, W * 0.65, horizonY);
+
+        } else if (biome === 'urban') {
+            // City / Urban Center
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+            skyGrad.addColorStop(0, '#0d1b2a');
+            skyGrad.addColorStop(0.4, '#1b263b');
+            skyGrad.addColorStop(0.75, '#415a77');
+            skyGrad.addColorStop(0.92, '#e07a5f');
+            skyGrad.addColorStop(1, '#f4a261');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, W, horizonY);
+
+            // Distant City Skyline (Seamless 360 wrap)
+            ctx.fillStyle = '#1b263b';
+            for (let x = 0; x < W; x += 22) {
+                const theta = (x / W) * Math.PI * 2;
+                const hFactor = (Math.sin(theta * 8) + 1) * 0.5;
+                const bldgHeight = 40 + hFactor * 120 + ((x * 13) % 45);
+                ctx.fillRect(x, horizonY - bldgHeight, 18, bldgHeight);
+
+                // Lit windows
+                ctx.fillStyle = 'rgba(255, 235, 59, 0.55)';
+                for (let wy = horizonY - bldgHeight + 8; wy < horizonY - 4; wy += 12) {
+                    if ((x + wy) % 5 !== 0) {
+                        ctx.fillRect(x + 4, wy, 3, 4);
+                        ctx.fillRect(x + 10, wy, 3, 4);
+                    }
+                }
+                ctx.fillStyle = '#1b263b';
+            }
+
+            // High Observation Deck Terrace Floor
+            const groundGrad = ctx.createLinearGradient(0, horizonY, 0, H);
+            groundGrad.addColorStop(0, '#263238');
+            groundGrad.addColorStop(0.2, '#37474f');
+            groundGrad.addColorStop(0.7, '#455a64');
+            groundGrad.addColorStop(1, '#212121');
+            ctx.fillStyle = groundGrad;
+            ctx.fillRect(0, horizonY, W, H - horizonY);
+
+            // Safety Glass Perimeter Railing
+            ctx.strokeStyle = 'rgba(66, 165, 245, 0.45)';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, horizonY + 22);
+            ctx.lineTo(W, horizonY + 22);
+            ctx.stroke();
+
+            // Paving Grid Perspective
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.lineWidth = 1.5;
+            for (let x = 0; x <= W; x += 64) {
+                ctx.beginPath();
+                ctx.moveTo(x, horizonY + 22);
+                ctx.lineTo(x, H);
+                ctx.stroke();
+            }
+
+            // NASA Urban Heat Island Atmospheric Doppler Station
+            drawNASAUrbanStation(ctx, W * 0.48, horizonY);
+
+        } else if (biome === 'forest') {
+            // Forest Canopy / Amazon Rainforest
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+            skyGrad.addColorStop(0, '#004d40');
+            skyGrad.addColorStop(0.3, '#00796b');
+            skyGrad.addColorStop(0.7, '#4db6ac');
+            skyGrad.addColorStop(1, '#c8e6c9');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, W, horizonY);
+
+            // Sunbeams through canopy
+            ctx.save();
+            ctx.fillStyle = 'rgba(255, 253, 231, 0.2)';
+            for (let b = 0; b < 6; b++) {
+                ctx.beginPath();
+                ctx.moveTo(W * 0.3, 0);
+                ctx.lineTo(W * (0.15 + b * 0.08), horizonY);
+                ctx.lineTo(W * (0.18 + b * 0.08), horizonY);
+                ctx.closePath();
+                ctx.fill();
+            }
+            ctx.restore();
+
+            // Tree Canopy & Rolling Ridges (Seamless 360 wrap)
+            ctx.fillStyle = '#1b5e20';
+            ctx.beginPath();
+            ctx.moveTo(0, horizonY);
+            for (let x = 0; x <= W; x += 6) {
+                const theta = (x / W) * Math.PI * 2;
+                const h = 55 + Math.sin(theta * 10) * 35 + Math.cos(theta * 22) * 20;
+                ctx.lineTo(x, horizonY - h);
+            }
+            ctx.lineTo(W, horizonY);
+            ctx.closePath();
+            ctx.fill();
+
+            // Lush Forest Floor
+            const groundGrad = ctx.createLinearGradient(0, horizonY, 0, H);
+            groundGrad.addColorStop(0, '#2e7d32');
+            groundGrad.addColorStop(0.3, '#1b5e20');
+            groundGrad.addColorStop(0.7, '#33691e');
+            groundGrad.addColorStop(1, '#1b2e11');
+            ctx.fillStyle = groundGrad;
+            ctx.fillRect(0, horizonY, W, H - horizonY);
+
+            // NASA Ecological Carbon Flux Tower
+            drawNASAFluxTower(ctx, W * 0.55, horizonY);
+
+        } else if (biome === 'desert') {
+            // Desert Dunes & Sandstone Buttes
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+            skyGrad.addColorStop(0, '#0d47a1');
+            skyGrad.addColorStop(0.35, '#1976d2');
+            skyGrad.addColorStop(0.7, '#ffb74d');
+            skyGrad.addColorStop(1, '#ffe0b2');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, W, horizonY);
+
+            // Blazing Desert Sun
+            const sunX = W * 0.42;
+            const sunY = horizonY - 110;
+            const sunGrad = ctx.createRadialGradient(sunX, sunY, 8, sunX, sunY, 240);
+            sunGrad.addColorStop(0, '#ffffff');
+            sunGrad.addColorStop(0.2, '#fff176');
+            sunGrad.addColorStop(0.6, 'rgba(255, 183, 77, 0.45)');
+            sunGrad.addColorStop(1, 'rgba(255, 183, 77, 0)');
+            ctx.fillStyle = sunGrad;
+            ctx.beginPath();
+            ctx.arc(sunX, sunY, 240, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Sandstone Mesas & Red-Rock Buttes (Seamless 360 wrap)
+            ctx.fillStyle = '#bf360c';
+            ctx.beginPath();
+            ctx.moveTo(0, horizonY);
+            for (let x = 0; x <= W; x += 6) {
+                const theta = (x / W) * Math.PI * 2;
+                const h = 45 + Math.sin(theta * 8) * 35 + Math.cos(theta * 18) * 22;
+                ctx.lineTo(x, horizonY - Math.max(10, h));
+            }
+            ctx.lineTo(W, horizonY);
+            ctx.closePath();
+            ctx.fill();
+
+            // Golden Sweeping Sand Dunes Ground
+            const groundGrad = ctx.createLinearGradient(0, horizonY, 0, H);
+            groundGrad.addColorStop(0, '#ffb74d');
+            groundGrad.addColorStop(0.25, '#ffa726');
+            groundGrad.addColorStop(0.6, '#f57c00');
+            groundGrad.addColorStop(1, '#e65100');
+            ctx.fillStyle = groundGrad;
+            ctx.fillRect(0, horizonY, W, H - horizonY);
+
+            // Wind-swept ripples on dunes
+            ctx.strokeStyle = 'rgba(230, 81, 0, 0.32)';
+            ctx.lineWidth = 2.5;
+            for (let y = horizonY + 25; y < H; y += 38) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                for (let x = 0; x <= W; x += 32) {
+                    const theta = (x / W) * Math.PI * 8;
+                    ctx.lineTo(x, y + Math.sin(theta + y * 0.08) * 9);
+                }
+                ctx.stroke();
+            }
+
+            // NASA Surface Solar Flux Radiation Station
+            drawNASASolarStation(ctx, W * 0.72, horizonY);
+
+        } else if (biome === 'mountain') {
+            // Alpine Summit / Himalayan Peaks
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+            skyGrad.addColorStop(0, '#001026');
+            skyGrad.addColorStop(0.3, '#0d47a1');
+            skyGrad.addColorStop(0.7, '#42a5f5');
+            skyGrad.addColorStop(1, '#bbdefb');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, W, horizonY);
+
+            // Sharp Snow-Capped Granite Peaks (Seamless 360 wrap)
+            ctx.fillStyle = '#37474f';
+            ctx.beginPath();
+            ctx.moveTo(0, horizonY);
+            for (let x = 0; x <= W; x += 4) {
+                const theta = (x / W) * Math.PI * 2;
+                const peak = Math.sin(theta * 8) * 75 + Math.cos(theta * 16) * 45 + Math.sin(theta * 32) * 20;
+                ctx.lineTo(x, horizonY - Math.max(0, peak));
+            }
+            ctx.lineTo(W, horizonY);
+            ctx.closePath();
+            ctx.fill();
+
+            // Snow caps on peaks
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.moveTo(0, horizonY);
+            for (let x = 0; x <= W; x += 4) {
+                const theta = (x / W) * Math.PI * 2;
+                const peak = Math.sin(theta * 8) * 75 + Math.cos(theta * 16) * 45 + Math.sin(theta * 32) * 20;
+                if (peak > 45) {
+                    ctx.lineTo(x, horizonY - peak);
+                } else {
+                    ctx.lineTo(x, horizonY - 45);
+                }
+            }
+            ctx.lineTo(W, horizonY);
+            ctx.closePath();
+            ctx.fill();
+
+            // Summit Rock & Scree Ground
+            const groundGrad = ctx.createLinearGradient(0, horizonY, 0, H);
+            groundGrad.addColorStop(0, '#455a64');
+            groundGrad.addColorStop(0.3, '#546e7a');
+            groundGrad.addColorStop(0.7, '#37474f');
+            groundGrad.addColorStop(1, '#263238');
+            ctx.fillStyle = groundGrad;
+            ctx.fillRect(0, horizonY, W, H - horizonY);
+
+            // NASA High-Altitude AWS Weather Station
+            drawNASAAlpineStation(ctx, W * 0.38, horizonY);
+
+        } else {
+            // Coastal Ocean / Marine Shore
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+            skyGrad.addColorStop(0, '#01579b');
+            skyGrad.addColorStop(0.4, '#0288d1');
+            skyGrad.addColorStop(0.75, '#4fc3f7');
+            skyGrad.addColorStop(1, '#e0f7fa');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, W, horizonY);
+
+            // Fluffy cumulus clouds along horizon
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            for (let cx = 40; cx < W; cx += 220) {
+                ctx.beginPath();
+                ctx.arc(cx, horizonY - 30, 42, 0, Math.PI * 2);
+                ctx.arc(cx + 35, horizonY - 40, 52, 0, Math.PI * 2);
+                ctx.arc(cx + 70, horizonY - 28, 38, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Distant Island Silhouettes
+            ctx.fillStyle = '#004d40';
+            ctx.beginPath();
+            ctx.moveTo(W * 0.7, horizonY);
+            ctx.quadraticCurveTo(W * 0.78, horizonY - 32, W * 0.86, horizonY);
+            ctx.fill();
+
+            // Turquoise Ocean Horizon to Sandy Shore
+            const groundGrad = ctx.createLinearGradient(0, horizonY, 0, H);
+            groundGrad.addColorStop(0, '#00838f');
+            groundGrad.addColorStop(0.3, '#00acc1');
+            groundGrad.addColorStop(0.65, '#26c6da');
+            groundGrad.addColorStop(0.85, '#ffe082');
+            groundGrad.addColorStop(1, '#ffca28');
+            ctx.fillStyle = groundGrad;
+            ctx.fillRect(0, horizonY, W, H - horizonY);
+
+            // Frothy sea foam surf line
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, H * 0.82);
+            for (let x = 0; x <= W; x += 40) {
+                const theta = (x / W) * Math.PI * 12;
+                ctx.lineTo(x, H * 0.82 + Math.sin(theta) * 6);
+            }
+            ctx.stroke();
+
+            // NASA Sea-Level & Coastal Climate Buoy Mast
+            drawNASACoastalBuoy(ctx, W * 0.6, horizonY);
+        }
+
+        // ============================================================
+        // 360-Degree Horizon Compass Markers (N, NE, E, SE, S, SW, W, NW)
+        // ============================================================
+        const cardinals = [
+            { label: 'NORTH (0°)', frac: 0 },
+            { label: 'NE (45°)', frac: 0.125 },
+            { label: 'EAST (90°)', frac: 0.25 },
+            { label: 'SE (135°)', frac: 0.375 },
+            { label: 'SOUTH (180°)', frac: 0.5 },
+            { label: 'SW (225°)', frac: 0.625 },
+            { label: 'WEST (270°)', frac: 0.75 },
+            { label: 'NW (315°)', frac: 0.875 },
+            { label: 'NORTH (360°)', frac: 1.0 }
+        ];
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.lineWidth = 1.5;
+        ctx.font = 'bold 15px sans-serif';
+        ctx.textAlign = 'center';
+
+        cardinals.forEach(c => {
+            const cx = c.frac * W;
+            // Compass tick line
+            ctx.beginPath();
+            ctx.moveTo(cx, horizonY - 14);
+            ctx.lineTo(cx, horizonY + 14);
+            ctx.stroke();
+
+            // Compass label
+            ctx.fillText(c.label, cx, horizonY - 20);
+        });
+
+        // ============================================================
+        // Nadir NASA Earth Observation Mission Plaque (Bottom Center)
+        // ============================================================
+        const nadirY = H * 0.94;
+        ctx.save();
+        ctx.fillStyle = 'rgba(10, 22, 40, 0.9)';
+        ctx.strokeStyle = 'rgba(66, 165, 245, 0.7)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(W * 0.35, nadirY - 30, W * 0.3, 56, 14);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#64b5f6';
+        ctx.font = 'bold 15px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('🛰️ NASA EARTH OBSERVATION FIELD SITE', W * 0.5, nadirY - 10);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '13px monospace';
+        const latStr = `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? 'N' : 'S'}`;
+        const lonStr = `${Math.abs(lon).toFixed(2)}°${lon >= 0 ? 'E' : 'W'}`;
+        ctx.fillText(`${locationName} (${latStr}, ${lonStr}) — 360° View`, W * 0.5, nadirY + 14);
+        ctx.restore();
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.repeat.x = 1;
+        panoTexturesCache[cacheKey] = texture;
+        return texture;
+    }
+
+    // Helper drawing routines for scientific NASA field equipment in panoramas
+    function drawNASAPolarStation(ctx, x, y) {
+        ctx.save();
+        // Station module on stilts
+        ctx.fillStyle = '#e65100'; // Safety orange
+        ctx.fillRect(x - 45, y - 55, 90, 42);
+        ctx.fillStyle = '#263238';
+        ctx.fillRect(x - 35, y - 45, 20, 16); // Window
+        ctx.fillRect(x + 15, y - 45, 20, 16);
+        // Stilts
+        ctx.strokeStyle = '#37474f';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(x - 35, y - 13);
+        ctx.lineTo(x - 35, y + 20);
+        ctx.moveTo(x + 35, y - 13);
+        ctx.lineTo(x + 35, y + 20);
+        ctx.stroke();
+        // Meteorological tower with wind sensor
+        ctx.strokeStyle = '#b0bec5';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x + 75, y + 20);
+        ctx.lineTo(x + 75, y - 95);
+        ctx.stroke();
+        // Anemometer cups
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(x + 75, y - 95, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function drawNASAUrbanStation(ctx, x, y) {
+        ctx.save();
+        // Weather radar dome on rooftop
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(x, y - 24, 22, Math.PI, 0);
+        ctx.fill();
+        ctx.fillStyle = '#37474f';
+        ctx.fillRect(x - 18, y - 24, 36, 26);
+        // NASA Meatball badge accent
+        ctx.fillStyle = '#1565c0';
+        ctx.beginPath();
+        ctx.arc(x, y - 10, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function drawNASAFluxTower(ctx, x, y) {
+        ctx.save();
+        // Lattice flux tower rising above forest
+        ctx.strokeStyle = '#90a4ae';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x - 14, y + 20);
+        ctx.lineTo(x, y - 110);
+        ctx.lineTo(x + 14, y + 20);
+        ctx.moveTo(x - 10, y - 30);
+        ctx.lineTo(x + 10, y - 30);
+        ctx.moveTo(x - 7, y - 65);
+        ctx.lineTo(x + 7, y - 65);
+        ctx.stroke();
+        // Sensor intake dome
+        ctx.fillStyle = '#ffeb3b';
+        ctx.beginPath();
+        ctx.arc(x, y - 110, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function drawNASASolarStation(ctx, x, y) {
+        ctx.save();
+        // Solar panel array on tripod
+        ctx.strokeStyle = '#455a64';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x, y - 35);
+        ctx.lineTo(x - 20, y + 16);
+        ctx.moveTo(x, y - 35);
+        ctx.lineTo(x + 20, y + 16);
+        ctx.stroke();
+        // Solar panels
+        ctx.fillStyle = '#0d47a1';
+        ctx.beginPath();
+        ctx.moveTo(x - 36, y - 35);
+        ctx.lineTo(x + 36, y - 48);
+        ctx.lineTo(x + 40, y - 25);
+        ctx.lineTo(x - 32, y - 12);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function drawNASAAlpineStation(ctx, x, y) {
+        ctx.save();
+        // Expedition cairn & weather tripod
+        ctx.fillStyle = '#78909c';
+        ctx.beginPath();
+        ctx.arc(x - 28, y + 10, 16, 0, Math.PI * 2);
+        ctx.arc(x - 28, y - 10, 12, 0, Math.PI * 2);
+        ctx.arc(x - 28, y - 26, 9, 0, Math.PI * 2);
+        ctx.fill();
+        // High-altitude AWS Mast
+        ctx.strokeStyle = '#cfd8dc';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x + 18, y + 16);
+        ctx.lineTo(x + 18, y - 85);
+        ctx.stroke();
+        // Ultrasonic wind sensor cross
+        ctx.beginPath();
+        ctx.moveTo(x + 8, y - 85);
+        ctx.lineTo(x + 28, y - 85);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    function drawNASACoastalBuoy(ctx, x, y) {
+        ctx.save();
+        // Ocean climate buoy floating in sea
+        ctx.fillStyle = '#fdd835';
+        ctx.beginPath();
+        ctx.arc(x, y + 18, 20, 0, Math.PI);
+        ctx.fill();
+        ctx.strokeStyle = '#f57f17';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x, y + 18);
+        ctx.lineTo(x, y - 50);
+        ctx.stroke();
+        // Light & satellite antenna
+        ctx.fillStyle = '#e53935';
+        ctx.beginPath();
+        ctx.arc(x, y - 50, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
     }
 
     function init3DGlobe() {
@@ -543,7 +1153,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const rotateBtn = document.getElementById('globe-rotate-btn');
         const focusBtn = document.getElementById('globe-focus-btn');
         const resetBtn = document.getElementById('globe-reset-btn');
+        const zoomSurfaceBtn = document.getElementById('globe-zoom-surface-btn');
+        const modeOrbitBtn = document.getElementById('mode-orbit-btn');
+        const modeInsideBtn = document.getElementById('mode-inside-btn');
+        const modeToggleActionBtn = document.getElementById('mode-toggle-action-btn');
+        const diveEnterBtn = document.getElementById('dive-enter-inside-btn');
         const earthLink = document.getElementById('google-earth-link');
+        const streetviewLink = document.getElementById('google-streetview-link');
+        const biomeSelector = document.getElementById('inside-biome-selector');
 
         if (!openBtn || !modal) return;
 
@@ -554,23 +1171,224 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.target === modal) close3DGlobeModal();
         });
 
+        // Mode switching buttons
+        modeOrbitBtn?.addEventListener('click', () => switchViewMode('orbit'));
+        modeInsideBtn?.addEventListener('click', () => switchViewMode('inside'));
+        modeToggleActionBtn?.addEventListener('click', () => {
+            switchViewMode(currentViewMode === 'orbit' ? 'inside' : 'orbit');
+        });
+        diveEnterBtn?.addEventListener('click', () => switchViewMode('inside'));
+
+        // Biome Selector buttons
+        biomeSelector?.addEventListener('click', (e) => {
+            const btn = e.target.closest('.biome-btn');
+            if (!btn) return;
+            const biome = btn.dataset.biome;
+            if (biome) {
+                setInsideBiome(biome);
+            }
+        });
+
         rotateBtn?.addEventListener('click', () => {
             isGlobeAutoRotate = !isGlobeAutoRotate;
             rotateBtn.classList.toggle('active', isGlobeAutoRotate);
-            rotateBtn.innerHTML = isGlobeAutoRotate ? '🔄 360° Auto-Rotate: ON' : '⏸️ 360° Auto-Rotate: OFF';
+            rotateBtn.innerHTML = isGlobeAutoRotate ? '🔄 360° Auto-Pan: ON' : '⏸️ 360° Auto-Pan: OFF';
         });
 
         focusBtn?.addEventListener('click', () => {
-            focusOnSelectedPin();
+            if (currentViewMode === 'orbit') {
+                focusOnSelectedPin();
+            } else {
+                panoTargetLon = 0;
+                panoTargetLat = 0;
+            }
+        });
+
+        zoomSurfaceBtn?.addEventListener('click', () => {
+            if (currentViewMode === 'orbit') {
+                zoomDeepToSurface();
+            } else {
+                // In inside mode, reset zoom FOV
+                panoFov = 75;
+                if (globeCamera) {
+                    globeCamera.fov = panoFov;
+                    globeCamera.updateProjectionMatrix();
+                }
+            }
         });
 
         resetBtn?.addEventListener('click', () => {
-            if (globeControls && globeCamera) {
-                globeCamera.position.set(0, 20, 220);
-                globeControls.target.set(0, 0, 0);
-                globeControls.update();
+            if (currentViewMode === 'orbit') {
+                if (globeControls && globeCamera) {
+                    globeCamera.position.set(0, 20, 220);
+                    globeControls.target.set(0, 0, 0);
+                    globeControls.update();
+                }
+            } else {
+                panoTargetLon = 0;
+                panoTargetLat = 0;
+                panoFov = 75;
+                if (globeCamera) {
+                    globeCamera.fov = panoFov;
+                    globeCamera.updateProjectionMatrix();
+                }
             }
         });
+
+        function switchViewMode(mode) {
+            currentViewMode = mode;
+            const orbitTab = document.getElementById('mode-orbit-btn');
+            const insideTab = document.getElementById('mode-inside-btn');
+            const toggleBtn = document.getElementById('mode-toggle-action-btn');
+            const divePrompt = document.getElementById('globe-dive-prompt');
+            const insideHud = document.getElementById('inside-place-hud');
+            const hintText = document.getElementById('globe-hint-text');
+
+            if (mode === 'inside') {
+                orbitTab?.classList.remove('active');
+                insideTab?.classList.add('active');
+                if (toggleBtn) {
+                    toggleBtn.innerHTML = '🌍 Return to Orbit Globe';
+                    toggleBtn.classList.add('active');
+                }
+                if (divePrompt) divePrompt.style.display = 'none';
+                if (insideHud) insideHud.style.display = 'flex';
+
+                if (hintText) {
+                    hintText.innerHTML = '💡 <strong>360° Inside Navigation:</strong> Drag anywhere with mouse or touch to look around 360° in all directions. Scroll or pinch to zoom FOV. Click biomes above to change environment!';
+                }
+
+                // Hide Orbit objects
+                if (earthMesh) earthMesh.visible = false;
+                if (atmosMesh) atmosMesh.visible = false;
+                if (pinMesh) pinMesh.visible = false;
+                if (starField) starField.visible = false;
+
+                // Show Panorama
+                if (panoMesh) panoMesh.visible = true;
+
+                // Disable OrbitControls, set camera to (0,0,0)
+                if (globeControls) globeControls.enabled = false;
+                if (globeCamera) {
+                    globeCamera.position.set(0, 0, 0);
+                    globeCamera.fov = panoFov;
+                    globeCamera.updateProjectionMatrix();
+                }
+
+                // Setup biome
+                const locName = getRegionDisplayName(state.selectedLat, state.selectedLon);
+                const detected = detectBiomeForLocation(state.selectedLat, state.selectedLon, locName);
+                setInsideBiome(detected);
+
+                // Update HUD Title
+                const hudTitle = document.getElementById('inside-hud-location-name');
+                if (hudTitle) {
+                    const latStr = `${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}`;
+                    const lonStr = `${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'}`;
+                    hudTitle.textContent = `${locName} (${latStr}, ${lonStr})`;
+                }
+
+                showNotification('Entered 360° Inside Place View! Drag to explore 360° around you.', 'info');
+
+            } else {
+                // Orbit mode
+                insideTab?.classList.remove('active');
+                orbitTab?.classList.add('active');
+                if (toggleBtn) {
+                    toggleBtn.innerHTML = '🏙️ Switch to 360° Inside';
+                    toggleBtn.classList.remove('active');
+                }
+                if (insideHud) insideHud.style.display = 'none';
+
+                if (hintText) {
+                    hintText.innerHTML = '💡 <strong>Unrestricted 360° Orbit Navigation:</strong> Drag to spin globe 360°. Scroll or pinch to zoom all the way down to the surface, or click "360° Inside Place" to stand inside!';
+                }
+
+                // Show Orbit objects
+                if (earthMesh) earthMesh.visible = true;
+                if (atmosMesh) atmosMesh.visible = true;
+                if (pinMesh) pinMesh.visible = true;
+                if (starField) starField.visible = true;
+
+                // Hide Panorama
+                if (panoMesh) panoMesh.visible = false;
+
+                // Re-enable OrbitControls & reset FOV
+                if (globeCamera) {
+                    globeCamera.fov = 45;
+                    globeCamera.updateProjectionMatrix();
+                }
+                if (globeControls) {
+                    globeControls.enabled = true;
+                    // UNRESTRICTED ZOOM: allows zooming right down to surface height!
+                    globeControls.minDistance = 80.5;
+                    globeControls.maxDistance = 500;
+                }
+                focusOnSelectedPin();
+            }
+        }
+
+        function setInsideBiome(biome) {
+            currentBiome = biome;
+            // Update button styles
+            const buttons = document.querySelectorAll('.biome-btn');
+            buttons.forEach(b => {
+                b.classList.toggle('active', b.dataset.biome === biome);
+            });
+
+            // Generate & apply panorama texture
+            const locName = getRegionDisplayName(state.selectedLat, state.selectedLon);
+            const tex = generateBiomePanoramaTexture(biome, locName, state.selectedLat || 0, state.selectedLon || 0);
+            if (panoMaterial) {
+                panoMaterial.map = tex;
+                panoMaterial.needsUpdate = true;
+            }
+        }
+
+        function zoomDeepToSurface() {
+            if (!globeCamera || !globeControls || state.selectedLat === null || state.selectedLon === null) return;
+
+            const lat = state.selectedLat;
+            const lon = state.selectedLon;
+            const dist = 83; // Close to surface (radius is 80)
+
+            const currentRotY = earthMesh ? earthMesh.rotation.y : 0;
+            const adjustedLon = lon + (currentRotY * 180 / Math.PI);
+
+            const phi = (90 - lat) * (Math.PI / 180);
+            const theta = (adjustedLon + 180) * (Math.PI / 180);
+
+            const targetX = -(dist * Math.sin(phi) * Math.cos(theta));
+            const targetZ = dist * Math.sin(phi) * Math.sin(theta);
+            const targetY = dist * Math.cos(phi);
+
+            // Animate camera position
+            const startX = globeCamera.position.x;
+            const startY = globeCamera.position.y;
+            const startZ = globeCamera.position.z;
+            let progress = 0;
+
+            showNotification('Diving down through atmosphere towards surface...', 'info');
+
+            function stepZoom() {
+                progress += 0.04;
+                if (progress >= 1) {
+                    globeCamera.position.set(targetX, targetY, targetZ);
+                    globeControls.update();
+                    setTimeout(() => {
+                        switchViewMode('inside');
+                    }, 300);
+                } else {
+                    const ease = Math.sin((progress * Math.PI) / 2);
+                    globeCamera.position.x = startX + (targetX - startX) * ease;
+                    globeCamera.position.y = startY + (targetY - startY) * ease;
+                    globeCamera.position.z = startZ + (targetZ - startZ) * ease;
+                    globeControls.update();
+                    requestAnimationFrame(stepZoom);
+                }
+            }
+            stepZoom();
+        }
 
         function open3DGlobeModal() {
             if (state.selectedLat === null || state.selectedLon === null) {
@@ -582,15 +1400,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const locName = getRegionDisplayName(state.selectedLat, state.selectedLon);
             const sub = document.getElementById('globe-modal-subtitle');
             if (sub) {
-                sub.textContent = `${locName} (${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'})`;
+                const latStr = `${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}`;
+                const lonStr = `${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'}`;
+                sub.textContent = `${locName} (${latStr}, ${lonStr})`;
             }
 
+            // Real-world external 3D & 360 links
             if (earthLink) {
-                earthLink.href = `https://earth.google.com/web/@${state.selectedLat},${state.selectedLon},2000a,35d,35y,0h,0t,0r`;
+                earthLink.href = `https://earth.google.com/web/@${state.selectedLat},${state.selectedLon},1500a,35d,35y,0h,60t,0r`;
+            }
+            if (streetviewLink) {
+                streetviewLink.href = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${state.selectedLat},${state.selectedLon}`;
             }
 
             setTimeout(() => {
                 setupThreeJSGlobe();
+                switchViewMode('orbit');
                 updateGlobePin();
                 focusOnSelectedPin();
             }, 60);
@@ -625,21 +1450,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
                 container.appendChild(globeRenderer.domElement);
 
-                // OrbitControls for 360 degree rotation
+                // OrbitControls for Orbit mode
                 if (typeof THREE.OrbitControls !== 'undefined') {
                     globeControls = new THREE.OrbitControls(globeCamera, globeRenderer.domElement);
                     globeControls.enableDamping = true;
                     globeControls.dampingFactor = 0.05;
-                    globeControls.minDistance = 105;
-                    globeControls.maxDistance = 420;
+                    // UNRESTRICTED ZOOM: minDistance 80.5 allows zooming right down to surface!
+                    globeControls.minDistance = 80.5;
+                    globeControls.maxDistance = 500;
                     globeControls.rotateSpeed = 0.8;
                 }
 
                 // Lighting
-                const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
                 globeScene.add(ambientLight);
 
-                const sunLight = new THREE.DirectionalLight(0xffffff, 1.1);
+                const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
                 sunLight.position.set(400, 250, 400);
                 globeScene.add(sunLight);
 
@@ -667,7 +1493,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         opacity: 0.15,
                         side: THREE.BackSide,
                     });
-                    const atmosMesh = new THREE.Mesh(atmosGeo, atmosMat);
+                    atmosMesh = new THREE.Mesh(atmosGeo, atmosMat);
                     globeScene.add(atmosMesh);
 
                     if (loadingEl) loadingEl.style.display = 'none';
@@ -681,17 +1507,62 @@ document.addEventListener('DOMContentLoaded', () => {
                     updateGlobePin();
                 });
 
-                // Stars
+                // Stars Background
                 const starsGeo = new THREE.BufferGeometry();
-                const starsCount = 1200;
+                const starsCount = 1400;
                 const starCoords = new Float32Array(starsCount * 3);
                 for (let i = 0; i < starsCount * 3; i++) {
                     starCoords[i] = (Math.random() - 0.5) * 1200;
                 }
                 starsGeo.setAttribute('position', new THREE.BufferAttribute(starCoords, 3));
                 const starsMat = new THREE.PointsMaterial({ color: 0xffffff, size: 1.2, transparent: true, opacity: 0.85 });
-                const starField = new THREE.Points(starsGeo, starsMat);
+                starField = new THREE.Points(starsGeo, starsMat);
                 globeScene.add(starField);
+
+                // 360 Panorama Inverted Sphere for "Inside Place" view
+                const panoGeo = new THREE.SphereGeometry(500, 60, 40);
+                panoGeo.scale(-1, 1, 1); // Turn inside-out so texture faces inwards
+                panoMaterial = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+                panoMesh = new THREE.Mesh(panoGeo, panoMaterial);
+                panoMesh.visible = false;
+                globeScene.add(panoMesh);
+
+                // ============================================================
+                // First-Person 360 Panorama Drag & Touch Controller
+                // ============================================================
+                container.addEventListener('pointerdown', (e) => {
+                    if (currentViewMode !== 'inside') return;
+                    isUserInteracting = true;
+                    onPointerDownPointerX = e.clientX;
+                    onPointerDownPointerY = e.clientY;
+                    onPointerDownLon = panoLon;
+                    onPointerDownLat = panoLat;
+                });
+
+                window.addEventListener('pointermove', (e) => {
+                    if (!isUserInteracting || currentViewMode !== 'inside') return;
+                    panoTargetLon = (onPointerDownPointerX - e.clientX) * 0.16 + onPointerDownLon;
+                    panoTargetLat = (e.clientY - onPointerDownPointerY) * 0.16 + onPointerDownLat;
+                });
+
+                window.addEventListener('pointerup', () => {
+                    isUserInteracting = false;
+                });
+                window.addEventListener('pointercancel', () => {
+                    isUserInteracting = false;
+                });
+
+                // Mouse wheel / Pinch FOV Zoom in 360 Inside mode
+                container.addEventListener('wheel', (e) => {
+                    if (currentViewMode !== 'inside') return;
+                    e.preventDefault();
+                    panoFov = Math.max(30, Math.min(105, panoFov + e.deltaY * 0.05));
+                    if (globeCamera) {
+                        globeCamera.fov = panoFov;
+                        globeCamera.updateProjectionMatrix();
+                    }
+                }, { passive: false });
+
             } else {
                 globeCamera.aspect = width / height;
                 globeCamera.updateProjectionMatrix();
@@ -702,15 +1573,66 @@ document.addEventListener('DOMContentLoaded', () => {
             function animateGlobe() {
                 globeAnimId = requestAnimationFrame(animateGlobe);
 
-                if (isGlobeAutoRotate && earthMesh) {
-                    earthMesh.rotation.y += 0.002;
-                    if (pinMesh) {
-                        pinMesh.rotation.y = earthMesh.rotation.y;
+                if (currentViewMode === 'orbit') {
+                    // Orbit Mode: Earth rotation and OrbitControls
+                    if (isGlobeAutoRotate && earthMesh) {
+                        earthMesh.rotation.y += 0.002;
+                        if (pinMesh) {
+                            pinMesh.rotation.y = earthMesh.rotation.y;
+                        }
+                    }
+
+                    if (globeControls) {
+                        globeControls.update();
+                        const camDist = globeCamera.position.distanceTo(globeControls.target);
+                        const divePrompt = document.getElementById('globe-dive-prompt');
+                        if (divePrompt) {
+                            if (camDist < 95) {
+                                divePrompt.style.display = 'block';
+                            } else {
+                                divePrompt.style.display = 'none';
+                            }
+                        }
+
+                        // Auto-dive transition when zooming very close to surface
+                        if (camDist <= 81.6) {
+                            switchViewMode('inside');
+                        }
+                    }
+                } else if (currentViewMode === 'inside') {
+                    // Inside 360 Panorama Mode: First-person spherical look-around
+                    panoLon += (panoTargetLon - panoLon) * 0.15;
+                    panoLat += (panoTargetLat - panoLat) * 0.15;
+                    panoLat = Math.max(-85, Math.min(85, panoLat));
+
+                    if (isGlobeAutoRotate && !isUserInteracting) {
+                        panoTargetLon += 0.08;
+                    }
+
+                    const phi = THREE.MathUtils.degToRad(90 - panoLat);
+                    const theta = THREE.MathUtils.degToRad(panoLon);
+
+                    const targetX = 500 * Math.sin(phi) * Math.cos(theta);
+                    const targetY = 500 * Math.cos(phi);
+                    const targetZ = 500 * Math.sin(phi) * Math.sin(theta);
+
+                    if (globeCamera) {
+                        globeCamera.lookAt(targetX, targetY, targetZ);
+                    }
+
+                    // Update live compass heading
+                    const headingDeg = Math.round(((-panoLon % 360) + 360) % 360);
+                    const compassDirections = ['North', 'NE', 'East', 'SE', 'South', 'SW', 'West', 'NW'];
+                    const compassIndex = Math.round(headingDeg / 45) % 8;
+                    const compassEl = document.getElementById('compass-heading');
+                    if (compassEl) {
+                        compassEl.textContent = `${compassDirections[compassIndex]} (${headingDeg}°)`;
                     }
                 }
 
-                if (globeControls) globeControls.update();
-                globeRenderer.render(globeScene, globeCamera);
+                if (globeRenderer && globeScene && globeCamera) {
+                    globeRenderer.render(globeScene, globeCamera);
+                }
             }
 
             if (!globeAnimId) animateGlobe();
