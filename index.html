@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EarthTrend Explorer — NASA Earth Science Trend Analysis</title>
+    <meta name="description" content="Explore Earth science data trends using NASA satellite and model data. Visualize time series and perform statistical trend analysis.">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- App CSS -->
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- ============================================================ -->
+    <!-- NAVBAR -->
+    <!-- ============================================================ -->
+    <nav class="navbar">
+        <div class="navbar-content">
+            <div class="navbar-brand">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/e/e5/NASA_logo.svg" alt="NASA" class="nasa-logo">
+                <div>
+                    <span class="navbar-title">EarthTrend Explorer</span>
+                    <span class="navbar-subtitle">NASA Earth Science Trend Analysis</span>
+                </div>
+            </div>
+            <div class="navbar-actions">
+                <button class="nav-btn" id="glossary-btn" title="Glossary of Terms">📖 Glossary</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ============================================================ -->
+    <!-- HERO SECTION -->
+    <!-- ============================================================ -->
+    <section class="hero">
+        <div class="hero-bg"></div>
+        <div class="hero-content">
+            <h1 class="hero-title">Become a Data Detective</h1>
+            <p class="hero-subtitle">
+                Explore how Earth's climate, weather, and environment are changing — using real NASA satellite and model data. 
+                Select a variable, pick a region, and discover what the data reveals.
+            </p>
+            <div class="hero-badges">
+                <span class="hero-badge">🛰️ NASA POWER Data</span>
+                <span class="hero-badge">📊 Statistical Analysis</span>
+                <span class="hero-badge">🗺️ Global Coverage</span>
+                <span class="hero-badge">📈 Trend Detection</span>
+            </div>
+            <a href="#step-variable" class="hero-cta">Start Exploring ↓</a>
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- NOTIFICATIONS -->
+    <!-- ============================================================ -->
+    <div id="notifications" class="notifications-container"></div>
+
+    <!-- ============================================================ -->
+    <!-- LOADING OVERLAY -->
+    <!-- ============================================================ -->
+    <div id="loading-overlay" class="loading-overlay" style="display:none;">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <p class="loading-text">Fetching data from NASA POWER API...</p>
+            <p class="loading-subtext">Analyzing trends and computing statistics</p>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- MAIN CONTENT -->
+    <!-- ============================================================ -->
+    <main class="main-content">
+
+        <!-- ============================== -->
+        <!-- DEMO EXAMPLES -->
+        <!-- ============================== -->
+        <section class="demo-section" id="demo-section">
+            <div class="section-header">
+                <h2>🚀 Quick Start — Try a Demo</h2>
+                <p>See how the tool works by running one of these preset investigations</p>
+            </div>
+            <div class="demo-grid" id="demo-examples">
+                <!-- Filled by JS -->
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- PROGRESS BAR -->
+        <!-- ============================== -->
+        <div class="progress-bar">
+            <div class="progress-step active" data-step="1">
+                <div class="progress-circle">1</div>
+                <span>Choose Variable</span>
+            </div>
+            <div class="progress-line"></div>
+            <div class="progress-step" data-step="2">
+                <div class="progress-circle">2</div>
+                <span>Select Region</span>
+            </div>
+            <div class="progress-line"></div>
+            <div class="progress-step" data-step="3">
+                <div class="progress-circle">3</div>
+                <span>Set Time Period</span>
+            </div>
+            <div class="progress-line"></div>
+            <div class="progress-step" data-step="4">
+                <div class="progress-circle">4</div>
+                <span>Analyze</span>
+            </div>
+        </div>
+
+        <!-- ============================== -->
+        <!-- STEP 1: VARIABLE SELECTION -->
+        <!-- ============================== -->
+        <section class="step-section" id="step-variable">
+            <div class="step-header">
+                <div class="step-number">1</div>
+                <div>
+                    <h2>Choose Your Variable</h2>
+                    <p>What aspect of the Earth system do you want to investigate? Click a category to see available variables.</p>
+                </div>
+            </div>
+            <div class="variable-categories" id="variable-categories">
+                <!-- Filled by JS -->
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- STEP 2: REGION SELECTION -->
+        <!-- ============================== -->
+        <section class="step-section" id="step-region">
+            <div class="step-header">
+                <div class="step-number">2</div>
+                <div>
+                    <h2>Select Your Region</h2>
+                    <p>Click on the map, choose a preset location, or enter coordinates manually.</p>
+                </div>
+            </div>
+            
+            <div class="region-layout">
+                <div class="map-wrapper">
+                    <div id="map" class="map-container"></div>
+                    <div class="selected-location-display">
+                        📍 Selected: <span id="selected-location">None — click the map</span>
+                    </div>
+                </div>
+                
+                <div class="region-controls">
+                    <div class="manual-coords">
+                        <h4>Manual Coordinates</h4>
+                        <div class="coord-inputs">
+                            <div class="input-group">
+                                <label for="lat-input">Latitude</label>
+                                <input type="number" id="lat-input" placeholder="e.g. 40.7" min="-90" max="90" step="0.01">
+                            </div>
+                            <div class="input-group">
+                                <label for="lon-input">Longitude</label>
+                                <input type="number" id="lon-input" placeholder="e.g. -74.0" min="-180" max="180" step="0.01">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="preset-locations">
+                        <h4>Preset Regions</h4>
+                        <div id="preset-regions" class="preset-grid">
+                            <!-- Filled by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- STEP 3: TIME PERIOD -->
+        <!-- ============================== -->
+        <section class="step-section" id="step-time">
+            <div class="step-header">
+                <div class="step-number">3</div>
+                <div>
+                    <h2>Set Time Period</h2>
+                    <p>Choose the date range and temporal resolution for your investigation. Longer periods give more reliable trend analysis.</p>
+                </div>
+            </div>
+            
+            <div class="time-controls">
+                <div class="time-inputs">
+                    <div class="input-group">
+                        <label for="start-year">Start Year</label>
+                        <input type="number" id="start-year" value="2001" min="1981" max="2024">
+                    </div>
+                    <div class="input-group">
+                        <label for="end-year">End Year</label>
+                        <input type="number" id="end-year" value="2023" min="1982" max="2024">
+                    </div>
+                    <div class="input-group">
+                        <label for="temporal-select">Resolution</label>
+                        <select id="temporal-select">
+                            <option value="monthly" selected>Monthly</option>
+                            <option value="daily">Daily</option>
+                        </select>
+                    </div>
+                </div>
+                <p class="time-hint">
+                    💡 <strong>Tip:</strong> Monthly data is recommended for trend analysis. 
+                    At least 10 years of data helps distinguish trends from natural variability.
+                    Data availability begins in 1981 for most variables.
+                </p>
+            </div>
+        </section>
+
+        <!-- ============================== -->
+        <!-- SELECTION SUMMARY & ANALYZE -->
+        <!-- ============================== -->
+        <section class="step-section analyze-section" id="step-analyze">
+            <div class="selection-summary" id="selection-summary">
+                Select a variable and region to begin
+            </div>
+            <button class="analyze-btn" id="analyze-btn" disabled>
+                <span class="btn-icon">🔬</span>
+                <span class="btn-text">Analyze Trend</span>
+            </button>
+        </section>
+
+        <!-- ============================== -->
+        <!-- RESULTS SECTION -->
+        <!-- ============================== -->
+        <section class="results-section" id="results-section" style="display:none;">
+            <div class="section-header">
+                <h2>📊 Analysis Results</h2>
+                <div class="results-actions">
+                    <button class="action-btn" id="export-btn" title="Export as CSV">📥 Export CSV</button>
+                </div>
+            </div>
+
+            <!-- Chart tabs -->
+            <div class="chart-tabs">
+                <button class="chart-tab active" data-view="raw">📈 Time Series</button>
+                <button class="chart-tab" data-view="deseasonalized">🔄 Deseasonalized</button>
+                <button class="chart-tab" data-view="anomaly">📊 Anomalies</button>
+            </div>
+
+            <!-- Chart -->
+            <div class="chart-wrapper">
+                <div id="chart" class="chart-container"></div>
+            </div>
+
+            <!-- Statistics -->
+            <div class="results-grid">
+                <div class="stats-card">
+                    <h3>📐 Statistical Analysis</h3>
+                    <div id="stats-container">
+                        <!-- Filled by JS -->
+                    </div>
+                </div>
+
+                <div class="summary-card">
+                    <h3>📝 What Does This Mean?</h3>
+                    <div id="summary-container">
+                        <!-- Filled by JS -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ============================================================ -->
+    <!-- GLOSSARY MODAL -->
+    <!-- ============================================================ -->
+    <div class="modal-overlay" id="glossary-modal" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>📖 Glossary of Terms</h2>
+                <button class="modal-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="glossary-item">
+                    <h4>Trend</h4>
+                    <p>A long-term increase or decrease in a measured variable over time. A trend indicates a consistent directional change, not just random fluctuations.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>Statistical Significance</h4>
+                    <p>A measure of confidence that an observed trend is real and not just due to random chance. A significance level (α) of 0.05 means there is less than a 5% probability the trend occurred by chance.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>p-value</h4>
+                    <p>The probability of observing a trend as strong as (or stronger than) the one found, assuming no real trend exists. Smaller p-values indicate stronger evidence for a real trend. Typically, p &lt; 0.05 is considered significant.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>Linear Regression</h4>
+                    <p>A statistical method that fits a straight line through the data to estimate the rate of change. The slope of this line represents the average rate of change per time step.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>R² (R-squared)</h4>
+                    <p>The fraction of the data's variation explained by the linear trend. R² = 0 means the trend explains nothing; R² = 1 means the trend explains all variation. For environmental data with seasons, R² for trends is often small.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>Mann-Kendall Test</h4>
+                    <p>A non-parametric statistical test that determines whether a series of values tends to increase or decrease over time. It doesn't require the data to follow a normal distribution, making it well-suited for environmental data.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>Kendall's τ (tau)</h4>
+                    <p>A measure of the strength of the trend from the Mann-Kendall test. Ranges from -1 (perfect decreasing trend) to +1 (perfect increasing trend). Values near 0 indicate no trend.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>Sen's Slope</h4>
+                    <p>The median of all pairwise slopes between data points. It is more robust to outliers than ordinary regression and provides a reliable estimate of the rate of change.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>Confidence Interval (CI)</h4>
+                    <p>A range of values within which the true slope likely falls. A 95% CI means we are 95% confident the real trend is within this range. If the CI doesn't include zero, the trend is significant.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>Anomaly</h4>
+                    <p>The deviation of a measurement from the long-term average for that time of year. Anomalies remove the seasonal cycle, making it easier to spot trends.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>Seasonal Decomposition</h4>
+                    <p>Separating a time series into three components: the long-term trend, the repeating seasonal cycle, and the remaining residual (random variation).</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>Moving Average</h4>
+                    <p>A smoothing technique that averages values within a sliding window (e.g., 12 months). It reduces noise and helps reveal the underlying trend.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>Deseasonalized Data</h4>
+                    <p>Data with the seasonal cycle removed. This makes it easier to see the long-term trend without seasonal ups and downs.</p>
+                </div>
+                <div class="glossary-item">
+                    <h4>NASA POWER</h4>
+                    <p>The Prediction Of Worldwide Energy Resources project provides solar and meteorological data from NASA research for renewable energy, agriculture, and sustainability. Data is derived from satellite observations and models including MERRA-2 and GLDAS.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- FOOTER -->
+    <!-- ============================================================ -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-main">
+                <p><strong>EarthTrend Explorer</strong> — Built for the NASA Space Apps Challenge</p>
+                <p>Data provided by <a href="https://power.larc.nasa.gov/" target="_blank" rel="noopener">NASA POWER</a> 
+                   (Prediction Of Worldwide Energy Resources), derived from satellite observations and 
+                   reanalysis models including MERRA-2 and GLDAS.</p>
+            </div>
+            <div class="footer-links">
+                <a href="https://power.larc.nasa.gov/docs/" target="_blank" rel="noopener">NASA POWER Docs</a>
+                <a href="https://www.earthdata.nasa.gov/" target="_blank" rel="noopener">NASA Earthdata</a>
+                <a href="https://giovanni.gsfc.nasa.gov/" target="_blank" rel="noopener">NASA Giovanni</a>
+            </div>
+            <div class="footer-note">
+                <p>⚠️ This tool is for educational and exploratory purposes. Results should be validated with peer-reviewed analyses for research use. Data from NASA POWER has a spatial resolution of 0.5° × 0.5° latitude/longitude.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- ============================================================ -->
+    <!-- SCRIPTS -->
+    <!-- ============================================================ -->
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Plotly JS -->
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <!-- App Modules -->
+    <script src="js/stats.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

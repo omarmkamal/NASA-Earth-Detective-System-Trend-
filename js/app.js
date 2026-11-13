@@ -1,0 +1,1224 @@
+// EarthTrend Explorer - Main Application
+// Handles UI, data fetching, visualization, and analysis orchestration
+
+document.addEventListener('DOMContentLoaded', () => {
+
+    // ============================================================
+    // VARIABLE DEFINITIONS
+    // ============================================================
+    // Define all available variables with metadata
+    // Each variable: { id, name, description, unit, category, nasaParam, community }
+    // nasaParam is the NASA POWER API parameter name
+    // community is the NASA POWER community code ("AG", "RE", or "SB")
+
+    const VARIABLES = [
+        // Temperature
+        { id: 'T2M', name: 'Surface Air Temperature',
+          description: 'Air temperature at 2 meters above the ground. This is the standard measurement height for weather stations and is the most commonly reported temperature.',
+          unit: '°C', category: 'temperature', nasaParam: 'T2M', community: 'AG',
+          icon: '🌡️' },
+        { id: 'T2M_MAX', name: 'Maximum Temperature',
+          description: 'The highest temperature recorded during each time period at 2 meters above the ground. Important for studying heat waves and extreme weather.',
+          unit: '°C', category: 'temperature', nasaParam: 'T2M_MAX', community: 'AG',
+          icon: '🌡️' },
+        { id: 'T2M_MIN', name: 'Minimum Temperature',
+          description: 'The lowest temperature recorded during each time period at 2 meters above the ground. Important for studying frost events and cold extremes.',
+          unit: '°C', category: 'temperature', nasaParam: 'T2M_MIN', community: 'AG',
+          icon: '🌡️' },
+        { id: 'T2MDEW', name: 'Dew Point Temperature',
+          description: 'The temperature at which air becomes saturated and water vapor condenses. Higher dew points mean more moisture in the air, affecting comfort and precipitation.',
+          unit: '°C', category: 'temperature', nasaParam: 'T2MDEW', community: 'AG',
+          icon: '💧' },
+        { id: 'TS', name: 'Earth Skin Temperature',
+          description: 'The temperature of the Earth\'s surface itself (land or ocean), as opposed to the air above it. This is what a satellite infrared sensor measures directly.',
+          unit: '°C', category: 'temperature', nasaParam: 'TS', community: 'AG',
+          icon: '🌍' },
+
+        // Precipitation
+        { id: 'PRECTOTCORR', name: 'Precipitation',
+          description: 'Total precipitation (rain and snow) corrected for gauge undercatch. The fundamental measurement of how much water falls from the atmosphere to the surface.',
+          unit: 'mm/day', category: 'precipitation', nasaParam: 'PRECTOTCORR', community: 'AG',
+          icon: '🌧️' },
+
+        // Humidity
+        { id: 'RH2M', name: 'Relative Humidity',
+          description: 'The amount of moisture in the air compared to the maximum it could hold at that temperature. 100% means the air is fully saturated. Important for comfort, agriculture, and weather.',
+          unit: '%', category: 'humidity', nasaParam: 'RH2M', community: 'AG',
+          icon: '💨' },
+        { id: 'QV2M', name: 'Specific Humidity',
+          description: 'The actual mass of water vapor per mass of air. Unlike relative humidity, this doesn\'t depend on temperature, making it better for tracking real moisture changes.',
+          unit: 'g/kg', category: 'humidity', nasaParam: 'QV2M', community: 'AG',
+          icon: '💨' },
+
+        // Wind
+        { id: 'WS2M', name: 'Wind Speed (2m)',
+          description: 'Wind speed measured at 2 meters above the surface. This height is standard for agricultural and environmental monitoring.',
+          unit: 'm/s', category: 'wind', nasaParam: 'WS2M', community: 'AG',
+          icon: '🌬️' },
+        { id: 'WS10M', name: 'Wind Speed (10m)',
+          description: 'Wind speed at 10 meters above the surface — the standard height for weather observations and wind energy assessment.',
+          unit: 'm/s', category: 'wind', nasaParam: 'WS10M', community: 'RE',
+          icon: '🌬️' },
+        { id: 'WS50M', name: 'Wind Speed (50m)',
+          description: 'Wind speed at 50 meters, approaching the height of wind turbine hubs. Important for wind energy resource assessment.',
+          unit: 'm/s', category: 'wind', nasaParam: 'WS50M', community: 'RE',
+          icon: '🌬️' },
+
+        // Solar Radiation
+        { id: 'ALLSKY_SFC_SW_DWN', name: 'Solar Radiation (All Sky)',
+          description: 'Total solar energy reaching the surface under actual sky conditions (including clouds). Measured in energy per area per day. Key for solar energy and agriculture.',
+          unit: 'kW-hr/m²/day', category: 'solar', nasaParam: 'ALLSKY_SFC_SW_DWN', community: 'RE',
+          icon: '☀️' },
+        { id: 'CLRSKY_SFC_SW_DWN', name: 'Solar Radiation (Clear Sky)',
+          description: 'Solar energy that would reach the surface if there were no clouds. Comparing this with all-sky values tells you how much solar energy clouds are blocking.',
+          unit: 'kW-hr/m²/day', category: 'solar', nasaParam: 'CLRSKY_SFC_SW_DWN', community: 'RE',
+          icon: '☀️' },
+        { id: 'ALLSKY_SFC_LW_DWN', name: 'Longwave Radiation',
+          description: 'Infrared (heat) radiation emitted downward by the atmosphere to the surface. This is the "greenhouse effect" in action — more greenhouse gases increase this value.',
+          unit: 'kW-hr/m²/day', category: 'solar', nasaParam: 'ALLSKY_SFC_LW_DWN', community: 'RE',
+          icon: '🔥' },
+
+        // Pressure & Clouds
+        { id: 'PS', name: 'Surface Pressure',
+          description: 'Atmospheric pressure at the Earth\'s surface. Changes in pressure patterns can indicate shifts in weather systems and circulation patterns.',
+          unit: 'kPa', category: 'atmosphere', nasaParam: 'PS', community: 'AG',
+          icon: '📊' },
+        { id: 'CLOUD_AMT', name: 'Cloud Cover',
+          description: 'The fraction of the sky covered by clouds, expressed as a percentage. Cloud changes affect both solar energy reaching the surface and the greenhouse effect.',
+          unit: '%', category: 'atmosphere', nasaParam: 'CLOUD_AMT', community: 'AG',
+          icon: '☁️' },
+    ];
+
+    // Category definitions with descriptions
+    const CATEGORIES = {
+        temperature: { name: 'Temperature', icon: '🌡️',
+            description: 'How hot or cold the air and surface are' },
+        precipitation: { name: 'Precipitation', icon: '🌧️',
+            description: 'Rain and snowfall reaching the ground' },
+        humidity: { name: 'Humidity', icon: '💧',
+            description: 'Moisture content of the atmosphere' },
+        wind: { name: 'Wind', icon: '🌬️',
+            description: 'Air movement speed at different heights' },
+        solar: { name: 'Solar & Radiation', icon: '☀️',
+            description: 'Energy from the sun and atmosphere' },
+        atmosphere: { name: 'Atmosphere', icon: '🌐',
+            description: 'Pressure and cloud conditions' },
+    };
+
+    // Preset regions for quick selection
+    const PRESET_REGIONS = [
+        { name: 'Amazon Rainforest', lat: -3.4, lon: -60.0, description: 'Tropical rainforest, heavy precipitation' },
+        { name: 'Sahara Desert', lat: 23.0, lon: 25.0, description: 'Arid desert, extreme temperatures' },
+        { name: 'Arctic (Svalbard)', lat: 78.0, lon: 16.0, description: 'Polar region, rapid warming' },
+        { name: 'Los Angeles', lat: 34.05, lon: -118.24, description: 'Urban heat island, coastal city' },
+        { name: 'Mumbai, India', lat: 19.08, lon: 72.88, description: 'Monsoon region, tropical coast' },
+        { name: 'Great Barrier Reef', lat: -18.3, lon: 147.7, description: 'Ocean warming, coral ecosystem' },
+        { name: 'Greenland Ice Sheet', lat: 72.0, lon: -40.0, description: 'Ice mass changes, warming' },
+        { name: 'Siberia', lat: 62.0, lon: 130.0, description: 'Permafrost region, extreme cold' },
+        { name: 'Sub-Saharan Africa', lat: 7.0, lon: 20.0, description: 'Savanna, changing rainfall patterns' },
+        { name: 'Central Europe', lat: 50.1, lon: 14.4, description: 'Temperate, changing seasons' },
+        { name: 'Antarctic Peninsula', lat: -65.0, lon: -64.0, description: 'Rapid warming, ice loss' },
+        { name: 'Hawaiian Islands', lat: 21.3, lon: -157.8, description: 'Pacific Ocean, trade winds' },
+    ];
+
+    // ============================================================
+    // STATE
+    // ============================================================
+    let state = {
+        selectedVariable: null,
+        selectedLat: null,
+        selectedLon: null,
+        startYear: 2001,
+        endYear: 2023,
+        temporal: 'monthly', // 'monthly' or 'daily'
+        map: null,
+        marker: null,
+        currentData: null,
+        currentAnalysis: null,
+    };
+
+    // ============================================================
+    // INITIALIZATION
+    // ============================================================
+
+    function init() {
+        renderVariableCategories();
+        initMap();
+        initTimeControls();
+        initDemoExamples();
+        setupEventListeners();
+        // Show welcome state
+        document.getElementById('results-section').style.display = 'none';
+    }
+
+    // ============================================================
+    // VARIABLE SELECTION UI
+    // ============================================================
+
+    function renderVariableCategories() {
+        const container = document.getElementById('variable-categories');
+        container.innerHTML = '';
+
+        Object.entries(CATEGORIES).forEach(([catId, cat]) => {
+            const vars = VARIABLES.filter(v => v.category === catId);
+            const card = document.createElement('div');
+            card.className = 'category-card';
+            card.dataset.category = catId;
+            card.innerHTML = `
+                <div class="category-header">
+                    <span class="category-icon">${cat.icon}</span>
+                    <div>
+                        <h3 class="category-name">${cat.name}</h3>
+                        <p class="category-desc">${cat.description}</p>
+                    </div>
+                    <span class="expand-icon">▶</span>
+                </div>
+                <div class="variable-list" style="display:none;">
+                    ${vars.map(v => `
+                        <label class="variable-item" data-var-id="${v.id}">
+                            <input type="radio" name="variable" value="${v.id}">
+                            <div class="variable-info">
+                                <span class="variable-name">${v.name}</span>
+                                <span class="variable-unit">(${v.unit})</span>
+                                <p class="variable-description">${v.description}</p>
+                            </div>
+                        </label>
+                    `).join('')}
+                </div>
+            `;
+            container.appendChild(card);
+
+            // Toggle expansion
+            card.querySelector('.category-header').addEventListener('click', () => {
+                const list = card.querySelector('.variable-list');
+                const icon = card.querySelector('.expand-icon');
+                const isOpen = list.style.display !== 'none';
+                // Close all others
+                document.querySelectorAll('.variable-list').forEach(l => l.style.display = 'none');
+                document.querySelectorAll('.expand-icon').forEach(i => i.textContent = '▶');
+                document.querySelectorAll('.category-card').forEach(c => c.classList.remove('active'));
+                if (!isOpen) {
+                    list.style.display = 'block';
+                    icon.textContent = '▼';
+                    card.classList.add('active');
+                }
+            });
+        });
+
+        // Listen for variable selection
+        container.addEventListener('change', (e) => {
+            if (e.target.name === 'variable') {
+                state.selectedVariable = VARIABLES.find(v => v.id === e.target.value);
+                document.querySelectorAll('.variable-item').forEach(item => item.classList.remove('selected'));
+                e.target.closest('.variable-item').classList.add('selected');
+                updateSelectionSummary();
+                // Scroll to next step
+                smoothScrollTo('step-region');
+            }
+        });
+    }
+
+    // ============================================================
+    // MAP INITIALIZATION (Leaflet)
+    // ============================================================
+
+    function initMap() {
+        // Initialize Leaflet map
+        state.map = L.map('map', {
+            center: [20, 0],
+            zoom: 2,
+            minZoom: 2,
+            maxZoom: 10,
+            worldCopyJump: true
+        });
+
+        // Add satellite tile layer (Esri World Imagery)
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: '© Esri, Maxar, Earthstar Geographics',
+            maxZoom: 18,
+        }).addTo(state.map);
+
+        // Add labels overlay so place names are readable on satellite
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 18,
+            pane: 'overlayPane',
+        }).addTo(state.map);
+
+        // Click to select location
+        state.map.on('click', (e) => {
+            setLocation(e.latlng.lat, e.latlng.lng);
+        });
+
+        // Render preset region buttons
+        const presetsContainer = document.getElementById('preset-regions');
+        presetsContainer.innerHTML = PRESET_REGIONS.map(r => `
+            <button class="preset-btn" data-lat="${r.lat}" data-lon="${r.lon}" title="${r.description}">
+                📍 ${r.name}
+            </button>
+        `).join('');
+
+        presetsContainer.addEventListener('click', (e) => {
+            const btn = e.target.closest('.preset-btn');
+            if (btn) {
+                const lat = parseFloat(btn.dataset.lat);
+                const lon = parseFloat(btn.dataset.lon);
+                setLocation(lat, lon);
+                state.map.setView([lat, lon], 5);
+                document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            }
+        });
+
+        // Manual lat/lon inputs
+        document.getElementById('lat-input').addEventListener('change', () => {
+            const lat = parseFloat(document.getElementById('lat-input').value);
+            const lon = parseFloat(document.getElementById('lon-input').value);
+            if (!isNaN(lat) && !isNaN(lon)) setLocation(lat, lon);
+        });
+        document.getElementById('lon-input').addEventListener('change', () => {
+            const lat = parseFloat(document.getElementById('lat-input').value);
+            const lon = parseFloat(document.getElementById('lon-input').value);
+            if (!isNaN(lat) && !isNaN(lon)) setLocation(lat, lon);
+        });
+    }
+
+    function setLocation(lat, lon) {
+        // Clamp values
+        lat = Math.max(-90, Math.min(90, lat));
+        lon = Math.max(-180, Math.min(180, lon));
+
+        state.selectedLat = Math.round(lat * 100) / 100;
+        state.selectedLon = Math.round(lon * 100) / 100;
+
+        // Update marker
+        if (state.marker) {
+            state.marker.setLatLng([lat, lon]);
+        } else {
+            state.marker = L.marker([lat, lon], {
+                draggable: true,
+            }).addTo(state.map);
+            state.marker.on('dragend', (e) => {
+                const pos = e.target.getLatLng();
+                setLocation(pos.lat, pos.lng);
+            });
+        }
+
+        // Update inputs
+        document.getElementById('lat-input').value = state.selectedLat;
+        document.getElementById('lon-input').value = state.selectedLon;
+
+        // Update location display
+        document.getElementById('selected-location').textContent =
+            `${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'}`;
+
+        updateSelectionSummary();
+    }
+
+    // ============================================================
+    // TIME CONTROLS
+    // ============================================================
+
+    function initTimeControls() {
+        const startInput = document.getElementById('start-year');
+        const endInput = document.getElementById('end-year');
+        const temporalSelect = document.getElementById('temporal-select');
+
+        startInput.value = state.startYear;
+        endInput.value = state.endYear;
+
+        startInput.addEventListener('change', () => {
+            state.startYear = parseInt(startInput.value);
+            updateSelectionSummary();
+        });
+        endInput.addEventListener('change', () => {
+            state.endYear = parseInt(endInput.value);
+            updateSelectionSummary();
+        });
+        if (temporalSelect) {
+            temporalSelect.addEventListener('change', () => {
+                state.temporal = temporalSelect.value;
+            });
+        }
+    }
+
+    // ============================================================
+    // SELECTION SUMMARY
+    // ============================================================
+
+    function updateSelectionSummary() {
+        const summary = document.getElementById('selection-summary');
+        if (!summary) return;
+
+        const parts = [];
+        if (state.selectedVariable) parts.push(`<strong>${state.selectedVariable.name}</strong>`);
+        if (state.selectedLat !== null) parts.push(`at ${Math.abs(state.selectedLat)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon)}°${state.selectedLon >= 0 ? 'E' : 'W'}`);
+        parts.push(`from ${state.startYear} to ${state.endYear}`);
+
+        summary.innerHTML = parts.length > 1 ? parts.join(' ') : 'Select a variable and region to begin';
+
+        // Enable/disable analyze button
+        const btn = document.getElementById('analyze-btn');
+        btn.disabled = !(state.selectedVariable && state.selectedLat !== null);
+    }
+
+    // ============================================================
+    // DATA FETCHING - NASA POWER API
+    // ============================================================
+
+    async function fetchData() {
+        const v = state.selectedVariable;
+
+        // Build NASA POWER API URL
+        const baseUrl = 'https://power.larc.nasa.gov/api/temporal';
+        const temporal = state.temporal; // 'monthly' or 'daily'
+
+        // For monthly data, format is YYYY, for daily it's YYYYMMDD
+        let startDate, endDate;
+        if (temporal === 'monthly') {
+            startDate = state.startYear;
+            endDate = state.endYear;
+        } else {
+            startDate = state.startYear + '0101';
+            endDate = state.endYear + '1231';
+        }
+
+        const url = `${baseUrl}/${temporal}/point?` + new URLSearchParams({
+            parameters: v.nasaParam,
+            community: v.community,
+            longitude: state.selectedLon,
+            latitude: state.selectedLat,
+            start: startDate,
+            end: endDate,
+            format: 'JSON',
+        });
+
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`NASA POWER API returned ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        // Parse the response
+        // NASA POWER returns data in: data.properties.parameter[PARAM_NAME]
+        // which is an object with date keys and values
+        const paramData = data.properties.parameter[v.nasaParam];
+
+        if (!paramData) {
+            throw new Error('No data returned for the selected variable and location.');
+        }
+
+        // Convert to arrays, filtering out annual-average entries.
+        // NASA POWER monthly data includes month "13" (annual average) which
+        // would corrupt the time series analysis — remove those entries.
+        let dates = Object.keys(paramData).sort();
+        if (temporal === 'monthly') {
+            dates = dates.filter(d => !d.endsWith('13'));
+        }
+        const values = dates.map(d => paramData[d]);
+
+        // Parse dates into readable format
+        const parsedDates = dates.map(d => {
+            if (temporal === 'monthly') {
+                // Format: YYYYMM
+                const year = d.substring(0, 4);
+                const month = d.substring(4, 6);
+                return `${year}-${month}`;
+            } else {
+                // Format: YYYYMMDD
+                const year = d.substring(0, 4);
+                const month = d.substring(4, 6);
+                const day = d.substring(6, 8);
+                return `${year}-${month}-${day}`;
+            }
+        });
+
+        return { dates: parsedDates, values, rawDates: dates };
+    }
+
+    // ============================================================
+    // MAIN ANALYSIS FUNCTION
+    // ============================================================
+
+    async function runAnalysis() {
+        // Validate inputs
+        if (!state.selectedVariable) {
+            showNotification('Please select a variable first.', 'warning');
+            return;
+        }
+        if (state.selectedLat === null) {
+            showNotification('Please select a region on the map.', 'warning');
+            return;
+        }
+        if (state.endYear <= state.startYear) {
+            showNotification('End year must be after start year.', 'warning');
+            return;
+        }
+
+        // Show loading
+        showLoading(true);
+        document.getElementById('results-section').style.display = 'none';
+
+        try {
+            // Fetch data
+            const rawData = await fetchData();
+            state.currentData = rawData;
+
+            // Prepare data for analysis
+            const x = rawData.values.map((_, i) => i);
+            const period = state.temporal === 'monthly' ? 12 : 365;
+
+            // Determine region name
+            let regionName = 'selected location';
+            const matchedPreset = PRESET_REGIONS.find(r =>
+                Math.abs(r.lat - state.selectedLat) < 1 && Math.abs(r.lon - state.selectedLon) < 1
+            );
+            if (matchedPreset) regionName = matchedPreset.name;
+            else regionName = `${Math.abs(state.selectedLat).toFixed(1)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(1)}°${state.selectedLon >= 0 ? 'E' : 'W'}`;
+
+            // Run full analysis via EarthStats
+            const rawAnalysis = EarthStats.fullAnalysis({
+                x: x,
+                y: rawData.values,
+                period: period,
+                variableName: state.selectedVariable.name,
+                variableUnit: state.selectedVariable.unit,
+                regionName: regionName,
+                startYear: state.startYear,
+                endYear: state.endYear,
+                temporal: state.temporal,
+            });
+
+            // Normalize the analysis result to a consistent shape used by rendering code.
+            // EarthStats.fullAnalysis returns keys: dataQuality, anomalies, regression,
+            // mannKendall, sensSlope, movingAverages (dict), seasonal, summary, x, y.
+            // Rendering helpers expect: cleanData, movingAverage, decomposition.
+            const analysis = Object.assign({}, rawAnalysis, {
+                // cleanData wrapper expected by chart/stats renderers
+                cleanData: {
+                    cleanData: rawAnalysis.y,
+                    validIndices: rawAnalysis.dataQuality
+                        ? (() => {
+                            // Rebuild valid indices from original data
+                            const indices = [];
+                            for (let i = 0; i < rawData.values.length; i++) {
+                                const v = rawData.values[i];
+                                if (v !== null && v !== undefined && !isNaN(v) &&
+                                    v !== -999 && v !== -9999 && v !== -999.0 && v !== -9999.0) {
+                                    indices.push(i);
+                                }
+                            }
+                            return indices;
+                        })()
+                        : rawAnalysis.x.map((_, i) => i),
+                    missingCount: rawAnalysis.dataQuality ? rawAnalysis.dataQuality.missingCount : 0,
+                    missingPercent: rawAnalysis.dataQuality ? rawAnalysis.dataQuality.missingPercent : 0,
+                },
+                // Pick the period-matched moving average (or the largest available)
+                movingAverage: (() => {
+                    if (!rawAnalysis.movingAverages) return null;
+                    const key = `${period}-point`;
+                    if (rawAnalysis.movingAverages[key]) return rawAnalysis.movingAverages[key];
+                    // Fallback to the widest window available
+                    const keys = Object.keys(rawAnalysis.movingAverages);
+                    if (keys.length > 0) return rawAnalysis.movingAverages[keys[keys.length - 1]];
+                    return null;
+                })(),
+                // Map 'seasonal' to 'decomposition' for rendering code
+                decomposition: rawAnalysis.seasonal || null,
+            });
+
+            state.currentAnalysis = analysis;
+
+            // Render results
+            renderChart(rawData, analysis);
+            renderStatistics(analysis);
+            renderSummary(analysis);
+
+            // Show results
+            document.getElementById('results-section').style.display = 'block';
+            smoothScrollTo('results-section');
+            showNotification('Analysis complete!', 'success');
+
+        } catch (error) {
+            console.error('Analysis failed:', error);
+            showNotification(`Error: ${error.message}`, 'error');
+        } finally {
+            showLoading(false);
+        }
+    }
+
+    // ============================================================
+    // CHART RENDERING (Plotly.js)
+    // ============================================================
+
+    function renderChart(rawData, analysis) {
+        const chartDiv = document.getElementById('chart');
+
+        // Prepare date labels for x-axis
+        const dates = rawData.dates;
+        const cleanValues = analysis.cleanData.cleanData;
+        const validIdx = analysis.cleanData.validIndices;
+
+        // Map clean data back to full date array (nulls for missing)
+        const fullValues = rawData.values.map(v => (v === -999 || v === -9999 || v === -99.99) ? null : v);
+
+        // Traces
+        const traces = [];
+
+        // 1. Raw data scatter
+        traces.push({
+            x: dates,
+            y: fullValues,
+            type: 'scatter',
+            mode: 'lines',
+            name: 'Observed Data',
+            line: { color: '#42a5f5', width: 1.5 },
+            opacity: 0.7,
+        });
+
+        // 2. Moving average (if we have enough data)
+        if (analysis.movingAverage) {
+            const maWindow = state.temporal === 'monthly' ? 12 : 365;
+            // Map moving average to dates - need to handle the offset
+            const maValues = new Array(dates.length).fill(null);
+            validIdx.forEach((origIdx, cleanIdx) => {
+                if (analysis.movingAverage[cleanIdx] !== null && analysis.movingAverage[cleanIdx] !== undefined) {
+                    maValues[origIdx] = analysis.movingAverage[cleanIdx];
+                }
+            });
+
+            traces.push({
+                x: dates,
+                y: maValues,
+                type: 'scatter',
+                mode: 'lines',
+                name: `${maWindow}-point Moving Average`,
+                line: { color: '#ff9800', width: 2.5 },
+            });
+        }
+
+        // 3. Linear trend line
+        if (analysis.regression) {
+            const reg = analysis.regression;
+            // Generate trend line across full valid date range
+            const firstValid = validIdx[0];
+            const lastValid = validIdx[validIdx.length - 1];
+            const trendStart = reg.intercept + reg.slope * 0;
+            const trendEnd = reg.intercept + reg.slope * (validIdx.length - 1);
+
+            traces.push({
+                x: [dates[firstValid], dates[lastValid]],
+                y: [trendStart, trendEnd],
+                type: 'scatter',
+                mode: 'lines',
+                name: `Linear Trend (${reg.slope > 0 ? '+' : ''}${reg.slope.toFixed(4)}/${state.temporal === 'monthly' ? 'month' : 'day'})`,
+                line: { color: '#c62828', width: 3, dash: 'dash' },
+            });
+
+            // 4. Confidence interval band
+            if (reg.slopeCI) {
+                const ciLowStart = reg.intercept + reg.slopeCI.lower * 0;
+                const ciLowEnd = reg.intercept + reg.slopeCI.lower * (validIdx.length - 1);
+                const ciHighStart = reg.intercept + reg.slopeCI.upper * 0;
+                const ciHighEnd = reg.intercept + reg.slopeCI.upper * (validIdx.length - 1);
+
+                traces.push({
+                    x: [dates[firstValid], dates[lastValid], dates[lastValid], dates[firstValid]],
+                    y: [ciHighStart, ciHighEnd, ciLowEnd, ciLowStart],
+                    fill: 'toself',
+                    fillcolor: 'rgba(198, 40, 40, 0.1)',
+                    line: { color: 'transparent' },
+                    name: '95% Confidence Interval',
+                    showlegend: true,
+                    type: 'scatter',
+                });
+            }
+        }
+
+        // Layout
+        const layout = {
+            title: {
+                text: `${state.selectedVariable.name} — Time Series & Trend Analysis`,
+                font: { size: 18, color: '#1a1a2e' },
+            },
+            xaxis: {
+                title: 'Date',
+                showgrid: true,
+                gridcolor: '#e0e6ed',
+            },
+            yaxis: {
+                title: `${state.selectedVariable.name} (${state.selectedVariable.unit})`,
+                showgrid: true,
+                gridcolor: '#e0e6ed',
+            },
+            legend: {
+                orientation: 'h',
+                yanchor: 'bottom',
+                y: -0.3,
+                xanchor: 'center',
+                x: 0.5,
+            },
+            margin: { t: 60, r: 30, b: 80, l: 70 },
+            plot_bgcolor: '#fafbfc',
+            paper_bgcolor: '#ffffff',
+            hovermode: 'x unified',
+            font: { family: 'Inter, sans-serif' },
+        };
+
+        const config = {
+            responsive: true,
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+            displaylogo: false,
+        };
+
+        Plotly.newPlot(chartDiv, traces, layout, config);
+    }
+
+    // ============================================================
+    // STATISTICS DISPLAY
+    // ============================================================
+
+    function renderStatistics(analysis) {
+        const container = document.getElementById('stats-container');
+
+        const reg = analysis.regression;
+        const mk = analysis.mannKendall;
+        const sen = analysis.sensSlope;
+
+        // Calculate per-year and per-decade rates
+        const divisor = state.temporal === 'monthly' ? 12 : 365;
+        const slopePerYear = reg.slope * divisor;
+        const slopePerDecade = slopePerYear * 10;
+        const senPerYear = sen.slope * divisor;
+        const senPerDecade = senPerYear * 10;
+
+        // Significance badge
+        const sigClass = mk.significant ? 'sig-yes' : 'sig-no';
+        const sigText = mk.pValue < 0.01 ? 'Highly Significant (p < 0.01)' :
+                       mk.pValue < 0.05 ? 'Significant (p < 0.05)' :
+                       mk.pValue < 0.10 ? 'Marginally Significant (p < 0.10)' :
+                       'Not Significant (p ≥ 0.10)';
+
+        // Trend direction arrow
+        const trendArrow = mk.trend === 'increasing' ? '↗️' : mk.trend === 'decreasing' ? '↘️' : '→';
+        const trendColor = mk.trend === 'increasing' ? '#c62828' : mk.trend === 'decreasing' ? '#1565c0' : '#546e7a';
+
+        container.innerHTML = `
+            <div class="trend-header">
+                <span class="trend-arrow" style="color: ${trendColor}">${trendArrow}</span>
+                <span class="trend-direction" style="color: ${trendColor}">
+                    ${mk.trend.charAt(0).toUpperCase() + mk.trend.slice(1)} Trend
+                </span>
+            </div>
+
+            <div class="significance-badge ${sigClass}">
+                ${mk.significant ? '✓' : '✗'} ${sigText}
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-group">
+                    <h4>📈 Linear Regression</h4>
+                    <div class="stat-row">
+                        <span class="stat-label">Rate of Change
+                            <span class="info-icon" title="The slope of the best-fit straight line through the data, expressed per year.">ⓘ</span>
+                        </span>
+                        <span class="stat-value">${slopePerYear >= 0 ? '+' : ''}${slopePerYear.toFixed(4)} ${state.selectedVariable.unit}/year</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Per Decade</span>
+                        <span class="stat-value">${slopePerDecade >= 0 ? '+' : ''}${slopePerDecade.toFixed(4)} ${state.selectedVariable.unit}/decade</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">R² (Explained Variance)
+                            <span class="info-icon" title="How much of the variation in the data is explained by the linear trend. 0 = none, 1 = all.">ⓘ</span>
+                        </span>
+                        <span class="stat-value">${(reg.rSquared * 100).toFixed(1)}%</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">p-value (t-test)
+                            <span class="info-icon" title="The probability of seeing this trend by random chance alone. Smaller values mean the trend is more likely real.">ⓘ</span>
+                        </span>
+                        <span class="stat-value">${reg.pValue < 0.001 ? '< 0.001' : reg.pValue.toFixed(4)}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">95% CI for Slope</span>
+                        <span class="stat-value">[${(reg.slopeCI.lower * divisor).toFixed(4)}, ${(reg.slopeCI.upper * divisor).toFixed(4)}] /year</span>
+                    </div>
+                </div>
+
+                <div class="stat-group">
+                    <h4>📊 Mann-Kendall Test</h4>
+                    <div class="stat-row">
+                        <span class="stat-label">Kendall's τ (tau)
+                            <span class="info-icon" title="A measure of the strength and direction of the trend. Ranges from -1 (strong decrease) to +1 (strong increase).">ⓘ</span>
+                        </span>
+                        <span class="stat-value">${mk.tau >= 0 ? '+' : ''}${mk.tau.toFixed(4)}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">S Statistic</span>
+                        <span class="stat-value">${mk.S}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Z Score</span>
+                        <span class="stat-value">${mk.Z.toFixed(4)}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">p-value (two-tailed)
+                            <span class="info-icon" title="Mann-Kendall p-value: non-parametric, doesn't assume data follows a normal distribution. Often preferred for environmental data.">ⓘ</span>
+                        </span>
+                        <span class="stat-value">${mk.pValue < 0.001 ? '< 0.001' : mk.pValue.toFixed(4)}</span>
+                    </div>
+                </div>
+
+                <div class="stat-group">
+                    <h4>📐 Sen's Slope Estimator</h4>
+                    <div class="stat-row">
+                        <span class="stat-label">Median Slope
+                            <span class="info-icon" title="The median of all pairwise slopes. More robust to outliers than ordinary least squares regression.">ⓘ</span>
+                        </span>
+                        <span class="stat-value">${senPerYear >= 0 ? '+' : ''}${senPerYear.toFixed(4)} ${state.selectedVariable.unit}/year</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Per Decade</span>
+                        <span class="stat-value">${senPerDecade >= 0 ? '+' : ''}${senPerDecade.toFixed(4)} ${state.selectedVariable.unit}/decade</span>
+                    </div>
+                    ${sen.confidenceInterval ? `
+                    <div class="stat-row">
+                        <span class="stat-label">95% CI for Slope</span>
+                        <span class="stat-value">[${(sen.confidenceInterval.lower * divisor).toFixed(4)}, ${(sen.confidenceInterval.upper * divisor).toFixed(4)}] /year</span>
+                    </div>
+                    ` : ''}
+                </div>
+
+                <div class="stat-group">
+                    <h4>📋 Data Quality</h4>
+                    <div class="stat-row">
+                        <span class="stat-label">Total Data Points</span>
+                        <span class="stat-value">${analysis.cleanData.cleanData.length + analysis.cleanData.missingCount}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Valid Data Points</span>
+                        <span class="stat-value">${analysis.cleanData.cleanData.length}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Missing Data</span>
+                        <span class="stat-value">${analysis.cleanData.missingCount} (${analysis.cleanData.missingPercent.toFixed(1)}%)</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Time Span</span>
+                        <span class="stat-value">${state.endYear - state.startYear} years</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // ============================================================
+    // SUMMARY DISPLAY
+    // ============================================================
+
+    function renderSummary(analysis) {
+        const container = document.getElementById('summary-container');
+        container.innerHTML = analysis.summary;
+    }
+
+    // ============================================================
+    // CHART VIEW TABS (Raw, Deseasonalized, Anomaly)
+    // ============================================================
+
+    function setupChartTabs() {
+        const tabs = document.querySelectorAll('.chart-tab');
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                tabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+
+                const view = tab.dataset.view;
+                if (state.currentData && state.currentAnalysis) {
+                    switch (view) {
+                        case 'raw':
+                            renderChart(state.currentData, state.currentAnalysis);
+                            break;
+                        case 'deseasonalized':
+                            renderDeseasonalizedChart();
+                            break;
+                        case 'anomaly':
+                            renderAnomalyChart();
+                            break;
+                    }
+                }
+            });
+        });
+    }
+
+    function renderDeseasonalizedChart() {
+        if (!state.currentAnalysis.decomposition) return;
+
+        const dates = state.currentData.dates;
+        const validIdx = state.currentAnalysis.cleanData.validIndices;
+        const deseasonalized = state.currentAnalysis.decomposition.deseasonalized;
+
+        const fullDeseasonalized = new Array(dates.length).fill(null);
+        validIdx.forEach((origIdx, cleanIdx) => {
+            if (deseasonalized[cleanIdx] !== undefined && deseasonalized[cleanIdx] !== null) {
+                fullDeseasonalized[origIdx] = deseasonalized[cleanIdx];
+            }
+        });
+
+        const reg = state.currentAnalysis.regression;
+        const firstValid = validIdx[0];
+        const lastValid = validIdx[validIdx.length - 1];
+
+        const traces = [
+            {
+                x: dates, y: fullDeseasonalized,
+                type: 'scatter', mode: 'lines',
+                name: 'Deseasonalized Data',
+                line: { color: '#42a5f5', width: 1.5 },
+            },
+            {
+                x: [dates[firstValid], dates[lastValid]],
+                y: [reg.intercept, reg.intercept + reg.slope * (validIdx.length - 1)],
+                type: 'scatter', mode: 'lines',
+                name: 'Linear Trend',
+                line: { color: '#c62828', width: 3, dash: 'dash' },
+            }
+        ];
+
+        const layout = {
+            title: { text: `${state.selectedVariable.name} — Deseasonalized`, font: { size: 18 } },
+            xaxis: { title: 'Date', gridcolor: '#e0e6ed' },
+            yaxis: { title: `${state.selectedVariable.name} (${state.selectedVariable.unit})`, gridcolor: '#e0e6ed' },
+            legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
+            margin: { t: 60, r: 30, b: 80, l: 70 },
+            plot_bgcolor: '#fafbfc', paper_bgcolor: '#ffffff',
+            hovermode: 'x unified', font: { family: 'Inter, sans-serif' },
+        };
+
+        Plotly.newPlot('chart', traces, layout, { responsive: true, displaylogo: false });
+    }
+
+    function renderAnomalyChart() {
+        if (!state.currentAnalysis.anomalies) return;
+
+        const dates = state.currentData.dates;
+        const validIdx = state.currentAnalysis.cleanData.validIndices;
+        const anomalies = state.currentAnalysis.anomalies;
+
+        const fullAnomalies = new Array(dates.length).fill(null);
+        validIdx.forEach((origIdx, cleanIdx) => {
+            if (anomalies[cleanIdx] !== undefined) {
+                fullAnomalies[origIdx] = anomalies[cleanIdx];
+            }
+        });
+
+        // Color bars by positive/negative
+        const colors = fullAnomalies.map(v => v === null ? '#ccc' : v >= 0 ? '#c62828' : '#1565c0');
+
+        const traces = [{
+            x: dates, y: fullAnomalies,
+            type: 'bar',
+            name: 'Anomaly',
+            marker: { color: colors },
+        }];
+
+        const layout = {
+            title: { text: `${state.selectedVariable.name} — Anomalies from Climatological Mean`, font: { size: 18 } },
+            xaxis: { title: 'Date', gridcolor: '#e0e6ed' },
+            yaxis: { title: `Anomaly (${state.selectedVariable.unit})`, gridcolor: '#e0e6ed', zeroline: true, zerolinecolor: '#000', zerolinewidth: 2 },
+            legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
+            margin: { t: 60, r: 30, b: 80, l: 70 },
+            plot_bgcolor: '#fafbfc', paper_bgcolor: '#ffffff',
+            font: { family: 'Inter, sans-serif' },
+            bargap: 0,
+        };
+
+        Plotly.newPlot('chart', traces, layout, { responsive: true, displaylogo: false });
+    }
+
+    // ============================================================
+    // DEMO EXAMPLES
+    // ============================================================
+
+    function initDemoExamples() {
+        const demos = [
+            {
+                name: '🌡️ Arctic Warming',
+                description: 'See rapid temperature rise near Svalbard in the Arctic — one of the fastest-warming regions on Earth.',
+                variable: 'T2M',
+                lat: 78.0, lon: 16.0,
+                startYear: 2001, endYear: 2023,
+            },
+            {
+                name: '🌧️ Sahara Precipitation',
+                description: 'Examine precipitation trends in the world\'s largest hot desert.',
+                variable: 'PRECTOTCORR',
+                lat: 23.0, lon: 25.0,
+                startYear: 2001, endYear: 2023,
+            },
+            {
+                name: '☀️ Solar Radiation — Amazon',
+                description: 'How is incoming solar radiation changing over the Amazon rainforest? Deforestation and cloud changes affect this.',
+                variable: 'ALLSKY_SFC_SW_DWN',
+                lat: -3.4, lon: -60.0,
+                startYear: 2001, endYear: 2023,
+            },
+            {
+                name: '🔥 Greenhouse Effect — Los Angeles',
+                description: 'Track longwave (infrared) radiation in LA — the greenhouse effect in action over a major city.',
+                variable: 'ALLSKY_SFC_LW_DWN',
+                lat: 34.05, lon: -118.24,
+                startYear: 2001, endYear: 2023,
+            },
+        ];
+
+        const container = document.getElementById('demo-examples');
+        if (!container) return;
+
+        container.innerHTML = demos.map((d, i) => `
+            <div class="demo-card" data-demo="${i}">
+                <h4>${d.name}</h4>
+                <p>${d.description}</p>
+                <button class="demo-btn" data-demo="${i}">Run This Demo</button>
+            </div>
+        `).join('');
+
+        container.addEventListener('click', (e) => {
+            const btn = e.target.closest('.demo-btn');
+            if (!btn) return;
+            const demo = demos[parseInt(btn.dataset.demo)];
+
+            // Set state
+            state.selectedVariable = VARIABLES.find(v => v.id === demo.variable);
+            state.startYear = demo.startYear;
+            state.endYear = demo.endYear;
+            state.temporal = 'monthly';
+
+            // Update UI
+            document.getElementById('start-year').value = demo.startYear;
+            document.getElementById('end-year').value = demo.endYear;
+
+            // Select variable in UI
+            const radio = document.querySelector(`input[value="${demo.variable}"]`);
+            if (radio) {
+                radio.checked = true;
+                // Expand the right category
+                const card = radio.closest('.category-card');
+                if (card) {
+                    document.querySelectorAll('.variable-list').forEach(l => l.style.display = 'none');
+                    document.querySelectorAll('.expand-icon').forEach(i => i.textContent = '▶');
+                    card.querySelector('.variable-list').style.display = 'block';
+                    card.querySelector('.expand-icon').textContent = '▼';
+                    card.classList.add('active');
+                }
+                document.querySelectorAll('.variable-item').forEach(item => item.classList.remove('selected'));
+                radio.closest('.variable-item').classList.add('selected');
+            }
+
+            // Set location
+            setLocation(demo.lat, demo.lon);
+            state.map.setView([demo.lat, demo.lon], 5);
+
+            // Update summary
+            updateSelectionSummary();
+
+            // Run analysis
+            runAnalysis();
+        });
+    }
+
+    // ============================================================
+    // UI HELPERS
+    // ============================================================
+
+    function showLoading(show) {
+        const overlay = document.getElementById('loading-overlay');
+        overlay.style.display = show ? 'flex' : 'none';
+    }
+
+    function showNotification(message, type = 'info') {
+        const container = document.getElementById('notifications');
+        const notif = document.createElement('div');
+        notif.className = `notification notification-${type}`;
+        notif.innerHTML = `
+            <span>${type === 'success' ? '✅' : type === 'error' ? '❌' : type === 'warning' ? '⚠️' : 'ℹ️'} ${message}</span>
+            <button class="notif-close" onclick="this.parentElement.remove()">×</button>
+        `;
+        container.appendChild(notif);
+        setTimeout(() => notif.classList.add('show'), 10);
+        setTimeout(() => {
+            notif.classList.remove('show');
+            setTimeout(() => notif.remove(), 300);
+        }, 5000);
+    }
+
+    function smoothScrollTo(elementId) {
+        const el = document.getElementById(elementId);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // ============================================================
+    // EVENT LISTENERS
+    // ============================================================
+
+    function setupEventListeners() {
+        // Analyze button
+        document.getElementById('analyze-btn').addEventListener('click', runAnalysis);
+
+        // Chart tabs
+        setupChartTabs();
+
+        // Export button
+        const exportBtn = document.getElementById('export-btn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', exportResults);
+        }
+
+        // Glossary modal
+        const glossaryBtn = document.getElementById('glossary-btn');
+        const glossaryModal = document.getElementById('glossary-modal');
+        if (glossaryBtn && glossaryModal) {
+            glossaryBtn.addEventListener('click', () => {
+                glossaryModal.style.display = 'flex';
+            });
+            glossaryModal.querySelector('.modal-close')?.addEventListener('click', () => {
+                glossaryModal.style.display = 'none';
+            });
+            glossaryModal.addEventListener('click', (e) => {
+                if (e.target === glossaryModal) glossaryModal.style.display = 'none';
+            });
+        }
+    }
+
+    // ============================================================
+    // EXPORT FUNCTIONALITY
+    // ============================================================
+
+    function exportResults() {
+        if (!state.currentAnalysis || !state.currentData) {
+            showNotification('No analysis results to export. Run an analysis first.', 'warning');
+            return;
+        }
+
+        const analysis = state.currentAnalysis;
+        const rawData = state.currentData;
+        const variable = state.selectedVariable;
+        const reg = analysis.regression;
+        const mk = analysis.mannKendall;
+        const sen = analysis.sensSlope;
+        const divisor = state.temporal === 'monthly' ? 12 : 365;
+
+        // Determine region name
+        let regionName = 'Selected Location';
+        const matchedPreset = PRESET_REGIONS.find(r =>
+            Math.abs(r.lat - state.selectedLat) < 1 && Math.abs(r.lon - state.selectedLon) < 1
+        );
+        if (matchedPreset) regionName = matchedPreset.name;
+        else regionName = `${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'}`;
+
+        // Build CSV content
+        const lines = [];
+
+        // Header section
+        lines.push('# EarthTrend Explorer — Analysis Report');
+        lines.push(`# Generated: ${new Date().toISOString()}`);
+        lines.push(`# Variable: ${variable.name} (${variable.id})`);
+        lines.push(`# Unit: ${variable.unit}`);
+        lines.push(`# Location: ${regionName} (${state.selectedLat}, ${state.selectedLon})`);
+        lines.push(`# Period: ${state.startYear} – ${state.endYear}`);
+        lines.push(`# Temporal Resolution: ${state.temporal}`);
+        lines.push('#');
+        lines.push('# === TREND ANALYSIS RESULTS ===');
+        lines.push(`# Trend Direction: ${mk.trend}`);
+        lines.push(`# Mann-Kendall p-value: ${mk.pValue < 0.001 ? '< 0.001' : mk.pValue.toFixed(6)}`);
+        lines.push(`# Mann-Kendall tau: ${mk.tau.toFixed(6)}`);
+        lines.push(`# Significant (α=0.05): ${mk.significant ? 'Yes' : 'No'}`);
+        lines.push(`# Linear Regression Slope: ${(reg.slope * divisor).toFixed(6)} ${variable.unit}/year`);
+        lines.push(`# Linear Regression R²: ${(reg.rSquared * 100).toFixed(2)}%`);
+        lines.push(`# Sen's Slope: ${(sen.slope * divisor).toFixed(6)} ${variable.unit}/year`);
+        lines.push(`# Total Data Points: ${analysis.cleanData.cleanData.length + analysis.cleanData.missingCount}`);
+        lines.push(`# Valid Data Points: ${analysis.cleanData.cleanData.length}`);
+        lines.push(`# Missing Data: ${analysis.cleanData.missingCount} (${analysis.cleanData.missingPercent.toFixed(1)}%)`);
+        lines.push('#');
+
+        // Data section header
+        lines.push('Date,Value,MovingAverage,Anomaly');
+
+        // Data rows
+        const validIdx = analysis.cleanData.validIndices;
+        const ma = analysis.movingAverage;
+        const anomalies = analysis.anomalies;
+
+        for (let i = 0; i < rawData.dates.length; i++) {
+            const date = rawData.dates[i];
+            const rawVal = rawData.values[i];
+
+            // Check if this index is a valid data point
+            const cleanIdx = validIdx.indexOf(i);
+            const isValid = cleanIdx !== -1;
+
+            const value = isValid ? rawVal : '';
+            const maVal = (isValid && ma && ma[cleanIdx] !== null && ma[cleanIdx] !== undefined)
+                ? ma[cleanIdx].toFixed(4) : '';
+            const anomVal = (isValid && anomalies && anomalies[cleanIdx] !== undefined && !isNaN(anomalies[cleanIdx]))
+                ? anomalies[cleanIdx].toFixed(4) : '';
+
+            lines.push(`${date},${value},${maVal},${anomVal}`);
+        }
+
+        // Create and trigger download
+        const csvContent = lines.join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `earthtrend_${variable.id}_${regionName.replace(/[^a-zA-Z0-9]/g, '_')}_${state.startYear}-${state.endYear}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        showNotification('Results exported as CSV!', 'success');
+    }
+
+    // ============================================================
+    // KEYBOARD SHORTCUTS
+    // ============================================================
+
+    document.addEventListener('keydown', (e) => {
+        // Ctrl/Cmd + Enter to run analysis
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            e.preventDefault();
+            runAnalysis();
+        }
+        // Escape to close modals
+        if (e.key === 'Escape') {
+            const glossaryModal = document.getElementById('glossary-modal');
+            if (glossaryModal) glossaryModal.style.display = 'none';
+        }
+    });
+
+    // ============================================================
+    // WINDOW RESIZE HANDLER
+    // ============================================================
+
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+            // Invalidate Leaflet map size on resize
+            if (state.map) {
+                state.map.invalidateSize();
+            }
+            // Plotly auto-resizes via responsive:true config
+        }, 250);
+    });
+
+    // ============================================================
+    // START THE APP
+    // ============================================================
+
+    init();
+});
