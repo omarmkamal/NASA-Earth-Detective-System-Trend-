@@ -1,4 +1,4 @@
-// EarthTrend Explorer - Main Application
+// NASA-EARTH Detective Trend - Main Application
 // Handles UI, data fetching, visualization, and analysis orchestration
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -2959,7 +2959,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const divisor = item.time.temporal === 'monthly' ? 12 : 365;
 
         const lines = [];
-        lines.push('# EarthTrend Explorer — Historical Analysis Report');
+        lines.push('# NASA-EARTH Detective Trend — Historical Analysis Report');
         lines.push(`# Saved On: ${item.timestamp}`);
         lines.push(`# Variable: ${variable.name} (${variable.id})`);
         lines.push(`# Unit: ${variable.unit}`);
@@ -3001,7 +3001,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.setAttribute('href', url);
-        link.setAttribute('download', `earthtrend_${variable.id}_${item.region.name.replace(/[^a-zA-Z0-9]/g, '_')}_${item.time.startYear}-${item.time.endYear}.csv`);
+        link.setAttribute('download', `nasa_earth_detective_${variable.id}_${item.region.name.replace(/[^a-zA-Z0-9]/g, '_')}_${item.time.startYear}-${item.time.endYear}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -3073,7 +3073,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const lines = [];
 
         // Header section
-        lines.push('# EarthTrend Explorer — Analysis Report');
+        lines.push('# NASA-EARTH Detective Trend — Analysis Report');
         lines.push(`# Generated: ${new Date().toISOString()}`);
         lines.push(`# Variable: ${variable.name} (${variable.id})`);
         lines.push(`# Unit: ${variable.unit}`);
@@ -3125,7 +3125,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.setAttribute('href', url);
-        link.setAttribute('download', `earthtrend_${variable.id}_${regionName.replace(/[^a-zA-Z0-9]/g, '_')}_${state.startYear}-${state.endYear}.csv`);
+        link.setAttribute('download', `nasa_earth_detective_${variable.id}_${regionName.replace(/[^a-zA-Z0-9]/g, '_')}_${state.startYear}-${state.endYear}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
