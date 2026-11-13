@@ -148,6 +148,9 @@ document.addEventListener('DOMContentLoaded', () => {
         init3DGlobe();
         initTimeControls();
         initDemoExamples();
+        initWelcomeModal();
+        initAuthSystem();
+        initHistorySystem();
         setupEventListeners();
         // Show welcome state
         document.getElementById('results-section').style.display = 'none';
@@ -962,6 +965,11 @@ document.addEventListener('DOMContentLoaded', () => {
             smoothScrollTo('results-section');
             showNotification('Analysis complete!', 'success');
 
+            // Save to search & analysis history
+            if (typeof saveAnalysisToHistory === 'function') {
+                saveAnalysisToHistory(state.selectedVariable, regionName, state.selectedLat, state.selectedLon, state.startYear, state.endYear, state.temporal, rawData, analysis);
+            }
+
         } catch (error) {
             console.error('Analysis failed:', error);
             showNotification(`Error: ${error.message}`, 'error');
@@ -1482,6 +1490,605 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
+    // WELCOME ONBOARDING MODAL
+    // ============================================================
+
+    function initWelcomeModal() {
+        const welcomeModal = document.getElementById('welcome-modal');
+        const welcomeBtn = document.getElementById('welcome-btn');
+        const closeBtn = document.getElementById('welcome-modal-close');
+        const startBtn = document.getElementById('welcome-start-btn');
+        const demoBtn = document.getElementById('welcome-demo-btn');
+        const dontShowCheckbox = document.getElementById('welcome-dont-show-again');
+
+        if (!welcomeModal) return;
+
+        // Automatically show welcome guide on first visit
+        const isDismissed = localStorage.getItem('earthtrend_welcome_dismissed');
+        if (isDismissed !== 'true') {
+            setTimeout(() => {
+                welcomeModal.style.display = 'flex';
+            }, 500);
+        }
+
+        function closeWelcome() {
+            welcomeModal.style.display = 'none';
+            if (dontShowCheckbox && dontShowCheckbox.checked) {
+                localStorage.setItem('earthtrend_welcome_dismissed', 'true');
+            }
+        }
+
+        welcomeBtn?.addEventListener('click', () => {
+            welcomeModal.style.display = 'flex';
+        });
+
+        closeBtn?.addEventListener('click', closeWelcome);
+        welcomeModal.addEventListener('click', (e) => {
+            if (e.target === welcomeModal) closeWelcome();
+        });
+
+        startBtn?.addEventListener('click', () => {
+            closeWelcome();
+            smoothScrollTo('step-variable');
+        });
+
+        demoBtn?.addEventListener('click', () => {
+            closeWelcome();
+            const firstDemoBtn = document.querySelector('.demo-btn[data-demo="0"]');
+            if (firstDemoBtn) firstDemoBtn.click();
+        });
+
+        dontShowCheckbox?.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                localStorage.setItem('earthtrend_welcome_dismissed', 'true');
+            } else {
+                localStorage.removeItem('earthtrend_welcome_dismissed');
+            }
+        });
+    }
+
+    // ============================================================
+    // USER ACCOUNT & AUTHENTICATION SYSTEM
+    // ============================================================
+
+    function getUsersStore() {
+        try {
+            return JSON.parse(localStorage.getItem('earthtrend_users')) || [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function saveUsersStore(users) {
+        localStorage.setItem('earthtrend_users', JSON.stringify(users));
+    }
+
+    function getCurrentUser() {
+        try {
+            return JSON.parse(localStorage.getItem('earthtrend_current_user'));
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function setCurrentUser(user) {
+        localStorage.setItem('earthtrend_current_user', JSON.stringify({
+            name: user.name,
+            email: user.email,
+            role: user.role
+        }));
+    }
+
+    function updateAuthUI() {
+        const user = getCurrentUser();
+        const authBtnText = document.getElementById('auth-btn-text');
+        const authBtnIcon = document.getElementById('auth-btn-icon');
+        const authBtn = document.getElementById('auth-btn');
+
+        if (user) {
+            if (authBtnIcon) {
+                authBtnIcon.textContent = user.role === 'Researcher' ? '🔬' : user.role === 'Student' ? '🎓' : user.role === 'Educator' ? '👩‍🏫' : '👨‍🚀';
+            }
+            if (authBtnText) {
+                authBtnText.textContent = user.name.split(' ')[0];
+            }
+            authBtn?.classList.add('logged-in');
+        } else {
+            if (authBtnIcon) authBtnIcon.textContent = '👤';
+            if (authBtnText) authBtnText.textContent = 'Sign In';
+            authBtn?.classList.remove('logged-in');
+        }
+    }
+
+    function openAuthModal() {
+        const modal = document.getElementById('auth-modal');
+        const profileView = document.getElementById('auth-profile-view');
+        const formView = document.getElementById('auth-form-view');
+        const user = getCurrentUser();
+
+        if (user) {
+            profileView.style.display = 'block';
+            formView.style.display = 'none';
+            document.getElementById('auth-modal-title').textContent = '👤 User Profile';
+            document.getElementById('profile-name').textContent = user.name;
+            document.getElementById('profile-email').textContent = user.email;
+            document.getElementById('profile-role').textContent = user.role;
+            const history = getHistory();
+            document.getElementById('profile-searches-count').textContent = history.length;
+        } else {
+            profileView.style.display = 'none';
+            formView.style.display = 'block';
+            document.getElementById('auth-modal-title').textContent = '👤 Sign In';
+        }
+
+        modal.style.display = 'flex';
+    }
+
+    function initAuthSystem() {
+        const authBtn = document.getElementById('auth-btn');
+        const authModal = document.getElementById('auth-modal');
+        const closeBtn = document.getElementById('auth-modal-close');
+        const signinForm = document.getElementById('signin-form');
+        const signupForm = document.getElementById('signup-form');
+        const switchToSignup = document.getElementById('switch-to-signup');
+        const switchToSignin = document.getElementById('switch-to-signin');
+        const signOutBtn = document.getElementById('sign-out-btn');
+        const viewHistoryBtn = document.getElementById('view-user-history-btn');
+        const authTabs = document.querySelectorAll('.auth-tab');
+
+        if (!authModal || !authBtn) return;
+
+        updateAuthUI();
+
+        authBtn.addEventListener('click', () => {
+            openAuthModal();
+        });
+
+        closeBtn?.addEventListener('click', () => {
+            authModal.style.display = 'none';
+        });
+
+        authModal.addEventListener('click', (e) => {
+            if (e.target === authModal) authModal.style.display = 'none';
+        });
+
+        // Tab toggle
+        authTabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const target = tab.dataset.tab;
+                authTabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                if (target === 'signin') {
+                    signinForm.style.display = 'flex';
+                    signupForm.style.display = 'none';
+                    document.getElementById('auth-modal-title').textContent = '👤 Sign In';
+                } else {
+                    signinForm.style.display = 'none';
+                    signupForm.style.display = 'flex';
+                    document.getElementById('auth-modal-title').textContent = '✨ Create Account';
+                }
+            });
+        });
+
+        switchToSignup?.addEventListener('click', (e) => {
+            e.preventDefault();
+            document.querySelector('.auth-tab[data-tab="signup"]')?.click();
+        });
+
+        switchToSignin?.addEventListener('click', (e) => {
+            e.preventDefault();
+            document.querySelector('.auth-tab[data-tab="signin"]')?.click();
+        });
+
+        // Sign In
+        signinForm?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const email = document.getElementById('signin-email').value.trim();
+            const pass = document.getElementById('signin-password').value;
+
+            const users = getUsersStore();
+            const found = users.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === pass);
+
+            if (found) {
+                setCurrentUser(found);
+                updateAuthUI();
+                authModal.style.display = 'none';
+                showNotification(`Welcome back, ${found.name}!`, 'success');
+            } else {
+                showNotification('Invalid email or password. Please try again.', 'error');
+            }
+        });
+
+        // Sign Up
+        signupForm?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const name = document.getElementById('signup-name').value.trim();
+            const email = document.getElementById('signup-email').value.trim();
+            const role = document.getElementById('signup-role').value;
+            const pass = document.getElementById('signup-password').value;
+
+            const users = getUsersStore();
+            if (users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
+                showNotification('An account with this email already exists.', 'warning');
+                return;
+            }
+
+            const newUser = {
+                name,
+                email,
+                role,
+                password: pass,
+                createdAt: new Date().toISOString()
+            };
+
+            users.push(newUser);
+            saveUsersStore(users);
+            setCurrentUser(newUser);
+            updateAuthUI();
+            authModal.style.display = 'none';
+            signupForm.reset();
+            showNotification(`Account created! Welcome, ${newUser.name}.`, 'success');
+        });
+
+        // Sign Out
+        signOutBtn?.addEventListener('click', () => {
+            localStorage.removeItem('earthtrend_current_user');
+            updateAuthUI();
+            authModal.style.display = 'none';
+            showNotification('Signed out successfully.', 'info');
+        });
+
+        viewHistoryBtn?.addEventListener('click', () => {
+            authModal.style.display = 'none';
+            document.getElementById('history-btn')?.click();
+        });
+    }
+
+    // ============================================================
+    // SEARCH & ANALYSIS HISTORY SYSTEM
+    // ============================================================
+
+    function getHistory() {
+        try {
+            return JSON.parse(localStorage.getItem('earthtrend_history')) || [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function saveHistory(list) {
+        try {
+            localStorage.setItem('earthtrend_history', JSON.stringify(list));
+        } catch (e) {
+            console.warn('History storage exceeded limit, pruning oldest items:', e);
+            if (list.length > 5) {
+                list = list.slice(0, 5);
+                localStorage.setItem('earthtrend_history', JSON.stringify(list));
+            }
+        }
+        updateHistoryBadge();
+    }
+
+    function updateHistoryBadge() {
+        const badge = document.getElementById('history-badge');
+        const list = getHistory();
+        if (badge) {
+            if (list.length > 0) {
+                badge.textContent = list.length;
+                badge.style.display = 'inline-block';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+    }
+
+    function saveAnalysisToHistory(variable, regionName, lat, lon, startYear, endYear, temporal, rawData, analysis) {
+        const list = getHistory();
+        const divisor = temporal === 'monthly' ? 12 : 365;
+
+        const reg = analysis.regression;
+        const mk = analysis.mannKendall;
+        const sen = analysis.sensSlope;
+
+        const item = {
+            id: 'hist_' + Date.now(),
+            timestamp: new Date().toISOString(),
+            variable: {
+                id: variable.id,
+                name: variable.name,
+                unit: variable.unit,
+                category: variable.category,
+                icon: variable.icon || '🌡️'
+            },
+            region: {
+                name: regionName,
+                lat: lat,
+                lon: lon
+            },
+            time: {
+                startYear: startYear,
+                endYear: endYear,
+                temporal: temporal
+            },
+            results: {
+                trend: mk.trend,
+                significant: mk.significant,
+                pValue: mk.pValue,
+                tau: mk.tau,
+                slopePerYear: reg.slope * divisor,
+                slopePerDecade: (reg.slope * divisor) * 10,
+                senPerYear: sen.slope * divisor,
+                rSquared: reg.rSquared
+            },
+            // Cache full raw data & analysis to allow 1-click full restore
+            rawData: rawData,
+            analysis: analysis
+        };
+
+        // Prepend and limit to 15 entries
+        list.unshift(item);
+        if (list.length > 15) list.pop();
+
+        saveHistory(list);
+    }
+
+    function initHistorySystem() {
+        const historyBtn = document.getElementById('history-btn');
+        const historyModal = document.getElementById('history-modal');
+        const closeBtn = document.getElementById('history-modal-close');
+        const clearBtn = document.getElementById('clear-all-history-btn');
+
+        updateHistoryBadge();
+
+        if (!historyBtn || !historyModal) return;
+
+        historyBtn.addEventListener('click', () => {
+            renderHistoryModal();
+            historyModal.style.display = 'flex';
+        });
+
+        closeBtn?.addEventListener('click', () => {
+            historyModal.style.display = 'none';
+        });
+
+        historyModal.addEventListener('click', (e) => {
+            if (e.target === historyModal) historyModal.style.display = 'none';
+        });
+
+        clearBtn?.addEventListener('click', () => {
+            if (confirm('Clear all saved search and analysis history?')) {
+                saveHistory([]);
+                renderHistoryModal();
+                showNotification('Search history cleared.', 'info');
+            }
+        });
+    }
+
+    function renderHistoryModal() {
+        const container = document.getElementById('history-list');
+        const countText = document.getElementById('history-count-text');
+        const list = getHistory();
+
+        if (countText) {
+            countText.textContent = `${list.length} saved ${list.length === 1 ? 'analysis' : 'analyses'}`;
+        }
+
+        if (!container) return;
+
+        if (list.length === 0) {
+            container.innerHTML = `
+                <div class="empty-history-box">
+                    <div class="empty-history-icon">📜</div>
+                    <h4>No Search History Yet</h4>
+                    <p>Select any Earth science variable and region, then run an analysis to save it in your research history.</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = list.map((item) => {
+            const dateStr = new Date(item.timestamp).toLocaleDateString(undefined, {
+                month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+
+            const res = item.results;
+            const trendIcon = res.trend === 'increasing' ? '↗️' : res.trend === 'decreasing' ? '↘️' : '→';
+            const trendClass = res.trend === 'increasing' ? 'chip-trend-inc' : res.trend === 'decreasing' ? 'chip-trend-dec' : 'chip-trend-none';
+            const sigText = res.significant ? 'Significant (p < 0.05)' : 'Not Significant';
+
+            return `
+                <div class="history-card" data-id="${item.id}">
+                    <div class="history-card-header">
+                        <div class="history-title-area">
+                            <span class="history-var-icon">${item.variable.icon || '🛰️'}</span>
+                            <div>
+                                <div class="history-var-name">${item.variable.name} (${item.variable.unit})</div>
+                                <div class="history-loc-name">📍 ${item.region.name} • ${item.time.startYear}–${item.time.endYear} (${item.time.temporal})</div>
+                            </div>
+                        </div>
+                        <span class="history-timestamp">${dateStr}</span>
+                    </div>
+
+                    <div class="history-chips">
+                        <span class="history-chip ${trendClass}">${trendIcon} ${res.trend.toUpperCase()}</span>
+                        <span class="history-chip">${res.slopePerYear >= 0 ? '+' : ''}${res.slopePerYear.toFixed(4)} ${item.variable.unit}/yr</span>
+                        <span class="history-chip">p ${res.pValue < 0.001 ? '< 0.001' : res.pValue.toFixed(4)} (${sigText})</span>
+                        <span class="history-chip">R² ${(res.rSquared * 100).toFixed(1)}%</span>
+                    </div>
+
+                    <div class="history-actions">
+                        <button class="history-restore-btn" data-id="${item.id}">
+                            🔄 Restore Full Analysis & Chart
+                        </button>
+                        <button class="history-export-btn" data-id="${item.id}">
+                            📥 Export CSV
+                        </button>
+                        <button class="history-del-btn" data-id="${item.id}" title="Delete from history">
+                            🗑️ Delete
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Hook up Restore buttons
+        container.querySelectorAll('.history-restore-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = btn.dataset.id;
+                restoreAnalysisFromHistory(id);
+            });
+        });
+
+        // Hook up Export buttons
+        container.querySelectorAll('.history-export-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = btn.dataset.id;
+                exportHistoryItemCSV(id);
+            });
+        });
+
+        // Hook up Delete buttons
+        container.querySelectorAll('.history-del-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = btn.dataset.id;
+                deleteHistoryItem(id);
+            });
+        });
+    }
+
+    function restoreAnalysisFromHistory(id) {
+        const list = getHistory();
+        const item = list.find(h => h.id === id);
+        if (!item) return;
+
+        // Restore state
+        state.selectedVariable = VARIABLES.find(v => v.id === item.variable.id) || item.variable;
+        state.selectedLat = item.region.lat;
+        state.selectedLon = item.region.lon;
+        state.startYear = item.time.startYear;
+        state.endYear = item.time.endYear;
+        state.temporal = item.time.temporal;
+
+        // Update inputs
+        document.getElementById('start-year').value = state.startYear;
+        document.getElementById('end-year').value = state.endYear;
+        const temporalSelect = document.getElementById('temporal-select');
+        if (temporalSelect) temporalSelect.value = state.temporal;
+
+        // Select radio button in UI
+        const radio = document.querySelector(`input[name="variable"][value="${item.variable.id}"]`);
+        if (radio) {
+            radio.checked = true;
+            document.querySelectorAll('.variable-item').forEach(el => el.classList.remove('selected'));
+            radio.closest('.variable-item')?.classList.add('selected');
+            const card = radio.closest('.category-card');
+            if (card) {
+                document.querySelectorAll('.variable-list').forEach(l => l.style.display = 'none');
+                document.querySelectorAll('.expand-icon').forEach(i => i.textContent = '▶');
+                card.querySelector('.variable-list').style.display = 'block';
+                card.querySelector('.expand-icon').textContent = '▼';
+                card.classList.add('active');
+            }
+        }
+
+        // Set map location
+        setLocation(item.region.lat, item.region.lon);
+        state.map.setView([item.region.lat, item.region.lon], 5);
+
+        // Restore cached data & analysis
+        state.currentData = item.rawData;
+        state.currentAnalysis = item.analysis;
+
+        // Re-render chart, stats, summary
+        renderChart(item.rawData, item.analysis);
+        renderStatistics(item.analysis);
+        renderSummary(item.analysis);
+
+        // Show results & scroll
+        document.getElementById('results-section').style.display = 'block';
+        document.getElementById('history-modal').style.display = 'none';
+        smoothScrollTo('results-section');
+
+        showNotification(`Restored analysis for ${item.variable.name} in ${item.region.name}`, 'info');
+    }
+
+    function deleteHistoryItem(id) {
+        let list = getHistory();
+        list = list.filter(h => h.id !== id);
+        saveHistory(list);
+        renderHistoryModal();
+        showNotification('Item removed from history.', 'info');
+    }
+
+    function exportHistoryItemCSV(id) {
+        const list = getHistory();
+        const item = list.find(h => h.id === id);
+        if (!item || !item.rawData || !item.analysis) {
+            showNotification('Could not export this item.', 'warning');
+            return;
+        }
+
+        const analysis = item.analysis;
+        const rawData = item.rawData;
+        const variable = item.variable;
+        const reg = analysis.regression;
+        const mk = analysis.mannKendall;
+        const sen = analysis.sensSlope;
+        const divisor = item.time.temporal === 'monthly' ? 12 : 365;
+
+        const lines = [];
+        lines.push('# EarthTrend Explorer — Historical Analysis Report');
+        lines.push(`# Saved On: ${item.timestamp}`);
+        lines.push(`# Variable: ${variable.name} (${variable.id})`);
+        lines.push(`# Unit: ${variable.unit}`);
+        lines.push(`# Location: ${item.region.name} (${item.region.lat}, ${item.region.lon})`);
+        lines.push(`# Period: ${item.time.startYear} – ${item.time.endYear}`);
+        lines.push(`# Temporal: ${item.time.temporal}`);
+        lines.push('#');
+        lines.push('# === STATISTICAL RESULTS ===');
+        lines.push(`# Trend: ${mk.trend}`);
+        lines.push(`# Mann-Kendall p-value: ${mk.pValue}`);
+        lines.push(`# Mann-Kendall tau: ${mk.tau}`);
+        lines.push(`# Linear Slope: ${(reg.slope * divisor).toFixed(6)} ${variable.unit}/year`);
+        lines.push(`# Sen's Slope: ${(sen.slope * divisor).toFixed(6)} ${variable.unit}/year`);
+        lines.push(`# R²: ${(reg.rSquared * 100).toFixed(2)}%`);
+        lines.push('#');
+        lines.push('Date,Value,MovingAverage,Anomaly');
+
+        const validIdx = analysis.cleanData.validIndices;
+        const ma = analysis.movingAverage;
+        const anomalies = analysis.anomalies;
+
+        for (let i = 0; i < rawData.dates.length; i++) {
+            const date = rawData.dates[i];
+            const rawVal = rawData.values[i];
+            const cleanIdx = validIdx.indexOf(i);
+            const isValid = cleanIdx !== -1;
+
+            const value = isValid ? rawVal : '';
+            const maVal = (isValid && ma && ma[cleanIdx] !== null && ma[cleanIdx] !== undefined)
+                ? ma[cleanIdx].toFixed(4) : '';
+            const anomVal = (isValid && anomalies && anomalies[cleanIdx] !== undefined && !isNaN(anomalies[cleanIdx]))
+                ? anomalies[cleanIdx].toFixed(4) : '';
+
+            lines.push(`${date},${value},${maVal},${anomVal}`);
+        }
+
+        const csvContent = lines.join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `earthtrend_${variable.id}_${item.region.name.replace(/[^a-zA-Z0-9]/g, '_')}_${item.time.startYear}-${item.time.endYear}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        showNotification('Historical analysis exported as CSV!', 'success');
+    }
+
+    // ============================================================
     // EVENT LISTENERS
     // ============================================================
 
@@ -1617,15 +2224,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         // Escape to close modals
         if (e.key === 'Escape') {
-            const glossaryModal = document.getElementById('glossary-modal');
-            if (glossaryModal) glossaryModal.style.display = 'none';
-            const globeModal = document.getElementById('globe-modal');
-            if (globeModal) {
-                globeModal.style.display = 'none';
-                if (globeAnimId) {
-                    cancelAnimationFrame(globeAnimId);
-                    globeAnimId = null;
-                }
+            ['glossary-modal', 'globe-modal', 'welcome-modal', 'auth-modal', 'history-modal'].forEach(id => {
+                const m = document.getElementById(id);
+                if (m) m.style.display = 'none';
+            });
+            if (globeAnimId) {
+                cancelAnimationFrame(globeAnimId);
+                globeAnimId = null;
             }
         }
     });

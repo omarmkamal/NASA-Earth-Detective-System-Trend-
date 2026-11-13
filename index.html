@@ -31,7 +31,14 @@
                 </div>
             </div>
             <div class="navbar-actions">
+                <button class="nav-btn" id="welcome-btn" title="About EarthTrend Explorer & Guide">ℹ️ Guide</button>
+                <button class="nav-btn" id="history-btn" title="View Search & Analysis History">
+                    🕒 History <span id="history-badge" class="badge-count" style="display:none;">0</span>
+                </button>
                 <button class="nav-btn" id="glossary-btn" title="Glossary of Terms">📖 Glossary</button>
+                <button class="nav-btn nav-btn-auth" id="auth-btn">
+                    <span id="auth-btn-icon">👤</span> <span id="auth-btn-text">Sign In</span>
+                </button>
             </div>
         </div>
     </nav>
@@ -384,6 +391,177 @@
                 </div>
                 <div class="globe-hint">
                     💡 <strong>360° Navigation:</strong> Drag with mouse or finger to freely rotate the globe 360°. Scroll or pinch to zoom in/out.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- WELCOME / ONBOARDING MODAL -->
+    <!-- ============================================================ -->
+    <div class="modal-overlay" id="welcome-modal" style="display:none;">
+        <div class="modal welcome-modal-dialog">
+            <div class="modal-header">
+                <div class="welcome-header-content">
+                    <span class="welcome-badge">🚀 NASA Space Apps Challenge</span>
+                    <h2>Welcome to EarthTrend Explorer 🌍</h2>
+                </div>
+                <button class="modal-close" id="welcome-modal-close" aria-label="Close modal">✕</button>
+            </div>
+            <div class="modal-body welcome-body">
+                <div class="welcome-intro">
+                    <p class="welcome-highlight">
+                        <strong>The Mission:</strong> Earth's environmental systems are constantly changing. Even when driven by the same global process, an Earth science variable can rise in one region and fall in another. EarthTrend Explorer turns you into a <strong>Data Detective</strong> to uncover, visualize, and statistically test these trends using real NASA satellite observations and reanalysis models.
+                    </p>
+                </div>
+
+                <div class="welcome-steps-grid">
+                    <div class="welcome-step-card">
+                        <div class="welcome-step-num">1</div>
+                        <div class="welcome-step-icon">🌡️</div>
+                        <h4>Choose a Variable</h4>
+                        <p>Explore 17 variables across Temperature, Rainfall, Humidity, Wind, Solar Radiation, and Atmosphere.</p>
+                    </div>
+                    <div class="welcome-step-card">
+                        <div class="welcome-step-num">2</div>
+                        <div class="welcome-step-icon">🗺️</div>
+                        <h4>Select Any Region</h4>
+                        <p>Search any city or landmark, click the satellite map, or pick presets like the Arctic, Amazon, or Sahara.</p>
+                    </div>
+                    <div class="welcome-step-card">
+                        <div class="welcome-step-num">3</div>
+                        <div class="welcome-step-icon">⏱️</div>
+                        <h4>Set Timeline</h4>
+                        <p>Analyze decades of historical observations (1981 to present) at monthly or daily resolution.</p>
+                    </div>
+                    <div class="welcome-step-card">
+                        <div class="welcome-step-num">4</div>
+                        <div class="welcome-step-icon">📊</div>
+                        <h4>Statistical Testing</h4>
+                        <p>Check rates of change with Linear Regression, Mann-Kendall test, Sen's slope, and 3D globe 360° views.</p>
+                    </div>
+                </div>
+
+                <div class="welcome-footer-actions">
+                    <button class="welcome-primary-btn" id="welcome-start-btn">🚀 Start Exploring</button>
+                    <button class="welcome-demo-btn" id="welcome-demo-btn">▶ Run Arctic Warming Demo</button>
+                </div>
+                <div class="welcome-checkbox-row">
+                    <label>
+                        <input type="checkbox" id="welcome-dont-show-again"> Don't show this message on startup
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- USER ACCOUNT & PROFILE MODAL -->
+    <!-- ============================================================ -->
+    <div class="modal-overlay" id="auth-modal" style="display:none;">
+        <div class="modal auth-modal-dialog">
+            <div class="modal-header">
+                <h2 id="auth-modal-title">👤 User Account</h2>
+                <button class="modal-close" id="auth-modal-close" aria-label="Close modal">✕</button>
+            </div>
+            <div class="modal-body auth-body">
+                <!-- If already logged in: Profile View -->
+                <div id="auth-profile-view" style="display:none;">
+                    <div class="profile-card">
+                        <div class="profile-avatar" id="profile-avatar">👨‍🔬</div>
+                        <div class="profile-info">
+                            <h3 id="profile-name">Explorer</h3>
+                            <p id="profile-email">user@spaceapps.org</p>
+                            <span class="profile-role-tag" id="profile-role">Student / Researcher</span>
+                        </div>
+                    </div>
+                    <div class="profile-stats">
+                        <div class="profile-stat-box">
+                            <span class="stat-number" id="profile-searches-count">0</span>
+                            <span class="stat-desc">Analyses Saved</span>
+                        </div>
+                        <div class="profile-stat-box">
+                            <span class="stat-number">17</span>
+                            <span class="stat-desc">NASA Variables</span>
+                        </div>
+                    </div>
+                    <div class="profile-actions">
+                        <button class="action-btn" id="view-user-history-btn">🕒 View My Saved History</button>
+                        <button class="action-btn btn-danger" id="sign-out-btn">🚪 Sign Out</button>
+                    </div>
+                </div>
+
+                <!-- If logged out: Login / Register Tabs -->
+                <div id="auth-form-view">
+                    <div class="auth-tabs">
+                        <button class="auth-tab active" data-tab="signin">Sign In</button>
+                        <button class="auth-tab" data-tab="signup">Create Account</button>
+                    </div>
+
+                    <!-- Sign In Form -->
+                    <form id="signin-form" class="auth-form">
+                        <div class="input-group">
+                            <label for="signin-email">Email Address</label>
+                            <input type="email" id="signin-email" placeholder="e.g. explorer@spaceapps.org" required>
+                        </div>
+                        <div class="input-group">
+                            <label for="signin-password">Password</label>
+                            <input type="password" id="signin-password" placeholder="••••••••" required>
+                        </div>
+                        <button type="submit" class="auth-submit-btn">Sign In</button>
+                        <p class="auth-switch-text">Don't have an account yet? <a href="#" id="switch-to-signup">Create one here</a></p>
+                    </form>
+
+                    <!-- Sign Up Form -->
+                    <form id="signup-form" class="auth-form" style="display:none;">
+                        <div class="input-group">
+                            <label for="signup-name">Full Name</label>
+                            <input type="text" id="signup-name" placeholder="e.g. Alex Rivera" required>
+                        </div>
+                        <div class="input-group">
+                            <label for="signup-email">Email Address</label>
+                            <input type="email" id="signup-email" placeholder="e.g. alex@university.edu" required>
+                        </div>
+                        <div class="input-group">
+                            <label for="signup-role">Role / Background</label>
+                            <select id="signup-role">
+                                <option value="Student">High School / College Student</option>
+                                <option value="Researcher">Researcher / Scientist</option>
+                                <option value="Educator">Educator / Teacher</option>
+                                <option value="Citizen Scientist">Citizen Scientist / Public</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label for="signup-password">Password</label>
+                            <input type="password" id="signup-password" placeholder="Create password" minlength="4" required>
+                        </div>
+                        <button type="submit" class="auth-submit-btn">Create Free Account</button>
+                        <p class="auth-switch-text">Already have an account? <a href="#" id="switch-to-signin">Sign in here</a></p>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- SEARCH & ANALYSIS HISTORY MODAL -->
+    <!-- ============================================================ -->
+    <div class="modal-overlay" id="history-modal" style="display:none;">
+        <div class="modal history-modal-dialog">
+            <div class="modal-header">
+                <div>
+                    <h2>🕒 Search & Analysis History</h2>
+                    <p class="modal-location-subtitle">Your past Earth science trend investigations and full results</p>
+                </div>
+                <button class="modal-close" id="history-modal-close" aria-label="Close modal">✕</button>
+            </div>
+            <div class="modal-body history-body">
+                <div class="history-toolbar">
+                    <span id="history-count-text">0 saved analyses</span>
+                    <button class="clear-history-btn" id="clear-all-history-btn">🗑️ Clear All</button>
+                </div>
+                <div id="history-list" class="history-list">
+                    <!-- Filled dynamically by JS -->
                 </div>
             </div>
         </div>
