@@ -125,16 +125,22 @@ document.addEventListener('DOMContentLoaded', () => {
     // STATE
     // ============================================================
     let state = {
-        selectedVariable: null,
+        selectedVariables: [],     // Array of selected variable objects
+        selectedVariable: null,     // Primary/focused variable object
+        focusedFactorId: null,      // 'comparison' or variable.id
+        currentView: 'raw',         // 'comparison', 'raw', 'deseasonalized', 'anomaly', 'correlation'
         selectedLat: null,
         selectedLon: null,
         startYear: 2001,
         endYear: 2023,
-        temporal: 'monthly', // 'monthly' or 'daily'
+        temporal: 'monthly',        // 'monthly' or 'daily'
         map: null,
         marker: null,
-        currentData: null,
-        currentAnalysis: null,
+        multiData: {},              // { [varId]: { dates, values, rawDates, variable } }
+        multiAnalysis: {},          // { [varId]: analysisObject }
+        correlations: [],           // Array of pairwise correlation objects
+        currentData: null,          // Legacy pointer for primary var
+        currentAnalysis: null,      // Legacy pointer for primary var
     };
 
     // ============================================================
@@ -143,6 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function init() {
         renderVariableCategories();
+        initFactorPresets();
         initMap();
         initMapSearch();
         init3DGlobe();
@@ -152,13 +159,13 @@ document.addEventListener('DOMContentLoaded', () => {
         initAuthSystem();
         initHistorySystem();
         setupEventListeners();
-        // Pre-select iconic Arctic T2M benchmark so Analyze Trend is 100% active and ready on load!
+        // Pre-select default factor(s) and preset region so Analyze Trend is 100% active and ready on load!
         selectDefaultInitialState();
         // Show welcome state
         document.getElementById('results-section').style.display = 'none';
     }
 
-    // Pre-select default variable and preset region so user is never faced with an unclickable button
+    // Pre-select default variables and preset region so user is never faced with an unclickable button
     function selectDefaultInitialState() {
         try {
             // Expand Temperature category accordion
@@ -171,14 +178,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 tempCard.classList.add('active');
             }
 
-            // Pre-select T2M (Surface Air Temperature)
-            state.selectedVariable = VARIABLES.find(v => v.id === 'T2M') || VARIABLES[0];
-            const t2mInput = document.querySelector('input[name="variable"][value="T2M"]');
-            if (t2mInput) {
-                t2mInput.checked = true;
-                const varItem = t2mInput.closest('.variable-item');
-                if (varItem) varItem.classList.add('selected');
-            }
+            // Pre-select T2M (Surface Air Temperature) and PRECTOTCORR (Precipitation)
+            const defaultVar1 = VARIABLES.find(v => v.id === 'T2M') || VARIABLES[0];
+            const defaultVar2 = VARIABLES.find(v => v.id === 'PRECTOTCORR') || VARIABLES[1];
+            state.selectedVariables = [defaultVar1, defaultVar2];
+            state.selectedVariable = defaultVar1;
+            state.focusedFactorId = 'comparison';
+
+            // Check checkboxes in UI
+            state.selectedVariables.forEach(v => {
+                const input = document.querySelector(`input[name="variable"][value="${v.id}"]`);
+                if (input) {
+                    input.checked = true;
+                    input.closest('.variable-item')?.classList.add('selected');
+                }
+            });
+
+            renderSelectedFactorChips();
 
             // Pre-select Arctic (Svalbard)
             const arctic = PRESET_REGIONS.find(r => r.name.includes('Arctic')) || PRESET_REGIONS[2];
@@ -198,7 +214,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    // VARIABLE SELECTION UI
+    // VARIABLE / FACTOR SELECTION UI (MULTI-FACTOR SUPPORT)
     // ============================================================
 
     function renderVariableCategories() {
@@ -222,7 +238,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="variable-list" style="display:none;">
                     ${vars.map(v => `
                         <label class="variable-item" data-var-id="${v.id}">
-                            <input type="radio" name="variable" value="${v.id}">
+                            <input type="checkbox" name="variable" value="${v.id}">
                             <div class="variable-info">
                                 <span class="variable-name">${v.name}</span>
                                 <span class="variable-unit">(${v.unit})</span>
@@ -235,15 +251,16 @@ document.addEventListener('DOMContentLoaded', () => {
             container.appendChild(card);
 
             // Toggle expansion
-            card.querySelector('.category-header').addEventListener('click', () => {
+            card.querySelector('.category-header').addEventListener('click', (e) => {
+                if (e.target.closest('input')) return;
                 const list = card.querySelector('.variable-list');
                 const icon = card.querySelector('.expand-icon');
                 const isOpen = list.style.display !== 'none';
-                // Close all others
-                document.querySelectorAll('.variable-list').forEach(l => l.style.display = 'none');
-                document.querySelectorAll('.expand-icon').forEach(i => i.textContent = '▶');
-                document.querySelectorAll('.category-card').forEach(c => c.classList.remove('active'));
-                if (!isOpen) {
+                if (isOpen) {
+                    list.style.display = 'none';
+                    icon.textContent = '▶';
+                    card.classList.remove('active');
+                } else {
                     list.style.display = 'block';
                     icon.textContent = '▼';
                     card.classList.add('active');
@@ -251,17 +268,129 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
 
-        // Listen for variable selection
+        // Listen for multi-factor checkbox changes
         container.addEventListener('change', (e) => {
             if (e.target.name === 'variable') {
-                state.selectedVariable = VARIABLES.find(v => v.id === e.target.value);
-                document.querySelectorAll('.variable-item').forEach(item => item.classList.remove('selected'));
-                e.target.closest('.variable-item').classList.add('selected');
+                const varId = e.target.value;
+                const v = VARIABLES.find(item => item.id === varId);
+                if (!v) return;
+
+                if (e.target.checked) {
+                    if (state.selectedVariables.length >= 5) {
+                        e.target.checked = false;
+                        showNotification('Maximum 5 environmental factors can be analyzed simultaneously.', 'warning');
+                        return;
+                    }
+                    if (!state.selectedVariables.some(item => item.id === varId)) {
+                        state.selectedVariables.push(v);
+                    }
+                    e.target.closest('.variable-item')?.classList.add('selected');
+                } else {
+                    state.selectedVariables = state.selectedVariables.filter(item => item.id !== varId);
+                    e.target.closest('.variable-item')?.classList.remove('selected');
+                }
+
+                state.selectedVariable = state.selectedVariables[0] || null;
+                state.focusedFactorId = state.selectedVariables.length > 1 ? 'comparison' : (state.selectedVariable ? state.selectedVariable.id : null);
+                renderSelectedFactorChips();
                 updateSelectionSummary();
-                // Scroll to next step
-                smoothScrollTo('step-region');
             }
         });
+    }
+
+    function renderSelectedFactorChips() {
+        const container = document.getElementById('factors-chips-container');
+        const badge = document.getElementById('factors-count-badge');
+        if (!container) return;
+
+        const count = state.selectedVariables.length;
+        if (badge) {
+            badge.innerHTML = `Selected Factors: <strong>${count}</strong> (Max 5)`;
+        }
+
+        if (count === 0) {
+            container.innerHTML = '<span style="font-size:0.82rem;color:var(--text-muted);font-style:italic;">No factors selected yet. Check one or more factors below to investigate.</span>';
+            return;
+        }
+
+        container.innerHTML = state.selectedVariables.map(v => `
+            <div class="factor-chip" data-id="${v.id}">
+                <span>${v.icon || '📊'}</span>
+                <span>${v.name}</span>
+                <button type="button" class="chip-remove" data-id="${v.id}" title="Remove ${v.name}">✕</button>
+            </div>
+        `).join('');
+
+        container.querySelectorAll('.chip-remove').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.dataset.id;
+                const input = document.querySelector(`input[name="variable"][value="${id}"]`);
+                if (input) {
+                    input.checked = false;
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                } else {
+                    state.selectedVariables = state.selectedVariables.filter(v => v.id !== id);
+                    state.selectedVariable = state.selectedVariables[0] || null;
+                    state.focusedFactorId = state.selectedVariables.length > 1 ? 'comparison' : (state.selectedVariable ? state.selectedVariable.id : null);
+                    renderSelectedFactorChips();
+                    updateSelectionSummary();
+                }
+            });
+        });
+    }
+
+    function initFactorPresets() {
+        const trioBtn = document.getElementById('preset-trio-btn');
+        const clearBtn = document.getElementById('clear-factors-btn');
+
+        if (trioBtn) {
+            trioBtn.addEventListener('click', () => {
+                const targetIds = ['T2M', 'PRECTOTCORR', 'CLOUD_AMT'];
+                state.selectedVariables = VARIABLES.filter(v => targetIds.includes(v.id));
+                state.selectedVariable = state.selectedVariables[0];
+                state.focusedFactorId = 'comparison';
+
+                document.querySelectorAll('input[name="variable"]').forEach(input => {
+                    input.checked = targetIds.includes(input.value);
+                    const item = input.closest('.variable-item');
+                    if (item) item.classList.toggle('selected', input.checked);
+                });
+
+                // Auto-open categories containing selected variables
+                ['temperature', 'precipitation', 'atmosphere'].forEach(catId => {
+                    const card = document.querySelector(`.category-card[data-category="${catId}"]`);
+                    if (card) {
+                        const list = card.querySelector('.variable-list');
+                        const icon = card.querySelector('.expand-icon');
+                        if (list) list.style.display = 'block';
+                        if (icon) icon.textContent = '▼';
+                        card.classList.add('active');
+                    }
+                });
+
+                renderSelectedFactorChips();
+                updateSelectionSummary();
+                showNotification('Selected Climate Trio: Temperature, Precipitation & Cloud Cover!', 'info');
+            });
+        }
+
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                state.selectedVariables = [];
+                state.selectedVariable = null;
+                state.focusedFactorId = null;
+
+                document.querySelectorAll('input[name="variable"]').forEach(input => {
+                    input.checked = false;
+                    input.closest('.variable-item')?.classList.remove('selected');
+                });
+
+                renderSelectedFactorChips();
+                updateSelectionSummary();
+                showNotification('Cleared factor selections.', 'info');
+            });
+        }
     }
 
     // ============================================================
@@ -1737,27 +1866,50 @@ document.addEventListener('DOMContentLoaded', () => {
         const summary = document.getElementById('selection-summary');
         if (!summary) return;
 
+        const count = state.selectedVariables.length;
         const parts = [];
-        if (state.selectedVariable) parts.push(`<strong>${state.selectedVariable.name}</strong>`);
-        if (state.selectedLat !== null) parts.push(`at ${Math.abs(state.selectedLat)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon)}°${state.selectedLon >= 0 ? 'E' : 'W'}`);
-        parts.push(`from ${state.startYear} to ${state.endYear}`);
+        if (count > 0) {
+            if (count === 1) {
+                parts.push(`<strong>${state.selectedVariables[0].name}</strong>`);
+            } else {
+                const names = state.selectedVariables.map(v => v.name).join(', ');
+                parts.push(`<strong>${count} Factors:</strong> ${names}`);
+            }
+        }
+        if (state.selectedLat !== null) {
+            let locName = `${Math.abs(state.selectedLat).toFixed(1)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(1)}°${state.selectedLon >= 0 ? 'E' : 'W'}`;
+            const matchedPreset = PRESET_REGIONS.find(r => Math.abs(r.lat - state.selectedLat) < 1 && Math.abs(r.lon - state.selectedLon) < 1);
+            if (matchedPreset) locName = matchedPreset.name;
+            parts.push(`at <strong>${locName}</strong>`);
+        }
+        parts.push(`(${state.startYear}–${state.endYear}, ${state.temporal})`);
 
-        summary.innerHTML = parts.length > 1 
-            ? `🔬 Ready to investigate: ${parts.join(' ')}` 
-            : 'Select an environmental variable in Step 1 and a location in Step 2 to begin';
+        if (count > 0 && state.selectedLat !== null) {
+            summary.innerHTML = `🔬 <strong>Ready to investigate:</strong> ${parts.join(' ')}`;
+        } else if (count === 0 && state.selectedLat === null) {
+            summary.innerHTML = 'Select 1 to 5 environmental factors in Step 1 and a location in Step 2 to begin';
+        } else if (count === 0) {
+            summary.innerHTML = '⚠️ Step 1 Missing: Select 1 to 5 environmental factors above';
+        } else {
+            summary.innerHTML = '⚠️ Step 2 Missing: Click the map or choose a Preset Region to select target coordinates';
+        }
 
         // Update analyze button state (NEVER set hard disabled so clicks always offer feedback)
         const btn = document.getElementById('analyze-btn');
         if (btn) {
             btn.disabled = false;
-            if (state.selectedVariable && state.selectedLat !== null) {
+            if (count > 0 && state.selectedLat !== null) {
                 btn.classList.add('ready');
                 btn.classList.remove('idle');
-                btn.title = 'Click to analyze NASA satellite data and calculate trends';
+                btn.innerHTML = count > 1 
+                    ? `🔬 Analyze ${count} Factors & Correlations` 
+                    : `🔬 Analyze Trend`;
+                btn.title = `Click to analyze NASA satellite data for ${count} factor(s) and compute cross-correlations`;
             } else {
                 btn.classList.remove('ready');
                 btn.classList.add('idle');
-                btn.title = 'Select a variable and location to begin analysis';
+                btn.innerHTML = `🔬 Analyze Trend`;
+                btn.title = 'Select variable(s) and location to begin analysis';
             }
         }
     }
@@ -1846,10 +1998,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return { dates, values, rawDates };
     }
 
-    async function fetchData() {
-        const v = state.selectedVariable;
+    // ============================================================
+    // DATA FETCHING (SINGLE & MULTI-FACTOR SUPPORT)
+    // ============================================================
 
-        // Build NASA POWER API URL
+    async function fetchParameterData(v) {
         const baseUrl = 'https://power.larc.nasa.gov/api/temporal';
         const temporal = state.temporal; // 'monthly' or 'daily'
 
@@ -1884,24 +2037,21 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             data = await response.json();
         } catch (fetchErr) {
-            console.warn('NASA POWER fetch exception:', fetchErr);
-            // Fallback to verified benchmark dataset if network is blocked/offline/rate-limited
+            console.warn(`NASA POWER fetch notice for ${v.nasaParam}:`, fetchErr);
             const benchmark = getVerifiedBenchmarkData(v.nasaParam, state.selectedLat, state.selectedLon, state.startYear, state.endYear, temporal);
             if (benchmark) {
-                showNotification('ℹ️ Live NASA API connection unavailable. Loaded verified NASA POWER benchmark dataset!', 'info');
-                return benchmark;
+                return { dates: benchmark.dates, values: benchmark.values, rawDates: benchmark.rawDates, variable: v, isBenchmark: true };
             }
-            throw new Error(`Unable to fetch NASA data (${fetchErr.message}). Check internet connection or ad-blocker.`);
+            throw new Error(`Unable to fetch NASA data for ${v.name}: ${fetchErr.message}`);
         }
 
-        const paramData = data.properties?.parameter?.[v.nasaParam];
+        const paramData = data?.properties?.parameter?.[v.nasaParam];
         if (!paramData) {
             const benchmark = getVerifiedBenchmarkData(v.nasaParam, state.selectedLat, state.selectedLon, state.startYear, state.endYear, temporal);
             if (benchmark) {
-                showNotification('ℹ️ Loaded verified NASA POWER benchmark dataset!', 'info');
-                return benchmark;
+                return { dates: benchmark.dates, values: benchmark.values, rawDates: benchmark.rawDates, variable: v, isBenchmark: true };
             }
-            throw new Error('No data returned for the selected variable and location.');
+            throw new Error(`No data returned for ${v.name}`);
         }
 
         let dates = Object.keys(paramData).sort();
@@ -1923,30 +2073,213 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        return { dates: parsedDates, values, rawDates: dates };
+        return { dates: parsedDates, values, rawDates: dates, variable: v, isBenchmark: false };
+    }
+
+    async function fetchMultiData() {
+        const promises = state.selectedVariables.map(v => fetchParameterData(v));
+        const results = await Promise.all(promises);
+
+        state.multiData = {};
+        let usedBenchmark = false;
+        results.forEach(res => {
+            state.multiData[res.variable.id] = res;
+            if (res.isBenchmark) usedBenchmark = true;
+        });
+
+        if (usedBenchmark) {
+            showNotification('ℹ️ Using verified NASA POWER benchmark records for high-fidelity offline/sandboxed analysis.', 'info');
+        }
+
+        return state.multiData;
+    }
+
+    async function fetchData() {
+        // Single variable compatibility wrapper
+        if (!state.selectedVariables || state.selectedVariables.length === 0) {
+            if (state.selectedVariable) state.selectedVariables = [state.selectedVariable];
+        }
+        await fetchMultiData();
+        const primary = state.selectedVariables[0];
+        return state.multiData[primary.id];
     }
 
     // ============================================================
-    // MAIN ANALYSIS FUNCTION
+    // CROSS-FACTOR CORRELATION & COUPLING ENGINE
+    // ============================================================
+
+    function approxNormalCDF(z) {
+        if (z < 0) return 1 - approxNormalCDF(-z);
+        const b0 = 0.2316419, b1 = 0.319381530, b2 = -0.356563782, b3 = 1.781477937, b4 = -1.821255978, b5 = 1.330274429;
+        const t = 1 / (1 + b0 * z);
+        const pdf = Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI);
+        return 1 - pdf * (b1*t + b2*t*t + b3*Math.pow(t,3) + b4*Math.pow(t,4) + b5*Math.pow(t,5));
+    }
+
+    function calculateCrossFactorCorrelations(multiData) {
+        const vars = state.selectedVariables;
+        const correlations = [];
+
+        for (let i = 0; i < vars.length; i++) {
+            for (let j = i + 1; j < vars.length; j++) {
+                const vA = vars[i];
+                const vB = vars[j];
+                const dataA = multiData[vA.id];
+                const dataB = multiData[vB.id];
+                if (!dataA || !dataB) continue;
+
+                const dateMapB = new Map();
+                dataB.dates.forEach((d, idx) => {
+                    const val = dataB.values[idx];
+                    if (val !== null && val !== undefined && !isNaN(val) && val !== -999 && val !== -9999 && val !== -99.99) {
+                        dateMapB.set(d, val);
+                    }
+                });
+
+                const validPairs = [];
+                dataA.dates.forEach((d, idx) => {
+                    const valA = dataA.values[idx];
+                    if (valA !== null && valA !== undefined && !isNaN(valA) && valA !== -999 && valA !== -9999 && valA !== -99.99) {
+                        if (dateMapB.has(d)) {
+                            validPairs.push({ date: d, a: valA, b: dateMapB.get(d) });
+                        }
+                    }
+                });
+
+                if (validPairs.length < 5) continue;
+
+                const n = validPairs.length;
+                const sumA = validPairs.reduce((s, p) => s + p.a, 0);
+                const sumB = validPairs.reduce((s, p) => s + p.b, 0);
+                const meanA = sumA / n;
+                const meanB = sumB / n;
+
+                let num = 0;
+                let denA = 0;
+                let denB = 0;
+                for (const p of validPairs) {
+                    const da = p.a - meanA;
+                    const db = p.b - meanB;
+                    num += da * db;
+                    denA += da * da;
+                    denB += db * db;
+                }
+
+                const r = (denA > 0 && denB > 0) ? num / Math.sqrt(denA * denB) : 0;
+                const rSquared = r * r;
+                const slope = denA > 0 ? num / denA : 0;
+                const intercept = meanB - slope * meanA;
+
+                let pValue = 1.0;
+                if (n > 2 && Math.abs(r) < 0.99999) {
+                    const t = Math.abs(r) * Math.sqrt((n - 2) / Math.max(0.00001, 1 - rSquared));
+                    pValue = 2 * (1 - approxNormalCDF(t));
+                } else if (Math.abs(r) >= 0.99999) {
+                    pValue = 0.00001;
+                }
+
+                const absR = Math.abs(r);
+                let strength = 'negligible';
+                if (absR >= 0.70) strength = 'strong';
+                else if (absR >= 0.40) strength = 'moderate';
+                else if (absR >= 0.20) strength = 'weak';
+
+                let relationship = '';
+                let narrative = '';
+                if (strength === 'negligible') {
+                    relationship = 'Decoupled / Independent';
+                    narrative = `Factors ${vA.name} and ${vB.name} exhibit decoupled variation (r = ${r.toFixed(3)}, R² = ${(rSquared * 100).toFixed(1)}%). No synchronous linear feedback loop observed over this timeframe.`;
+                } else if (r > 0) {
+                    relationship = `${strength.charAt(0).toUpperCase() + strength.slice(1)} Positive Co-Trend`;
+                    narrative = `Coupled Progression: Rising ${vA.name} aligns consistently with increasing ${vB.name} (r = +${r.toFixed(3)}, R² = ${(rSquared * 100).toFixed(1)}%, p ${pValue < 0.001 ? '< 0.001' : '= ' + pValue.toFixed(4)}), confirming a reinforcing climate feedback.`;
+                } else {
+                    relationship = `${strength.charAt(0).toUpperCase() + strength.slice(1)} Inverse Dynamic`;
+                    narrative = `Antagonistic Response: Elevated ${vA.name} coincides strongly with suppressed ${vB.name} (r = ${r.toFixed(3)}, R² = ${(rSquared * 100).toFixed(1)}%, p ${pValue < 0.001 ? '< 0.001' : '= ' + pValue.toFixed(4)}), indicating an inverse ecological trade-off.`;
+                }
+
+                correlations.push({
+                    varA: vA,
+                    varB: vB,
+                    r,
+                    rSquared,
+                    slope,
+                    intercept,
+                    pValue,
+                    strength,
+                    relationship,
+                    narrative,
+                    pairs: validPairs,
+                    meanA,
+                    meanB,
+                });
+            }
+        }
+
+        return correlations;
+    }
+
+    function analyzeFactor(rawData, variable, regionName) {
+        const x = rawData.values.map((_, i) => i);
+        const period = state.temporal === 'monthly' ? 12 : 365;
+
+        const rawAnalysis = EarthStats.fullAnalysis({
+            x: x,
+            y: rawData.values,
+            period: period,
+            variableName: variable.name,
+            variableUnit: variable.unit,
+            regionName: regionName,
+            startYear: state.startYear,
+            endYear: state.endYear,
+            temporal: state.temporal,
+        });
+
+        const analysis = Object.assign({}, rawAnalysis, {
+            cleanData: {
+                cleanData: rawAnalysis.y,
+                validIndices: rawAnalysis.dataQuality
+                    ? (() => {
+                        const indices = [];
+                        for (let i = 0; i < rawData.values.length; i++) {
+                            const v = rawData.values[i];
+                            if (v !== null && v !== undefined && !isNaN(v) &&
+                                v !== -999 && v !== -9999 && v !== -999.0 && v !== -9999.0 && v !== -99.99) {
+                                indices.push(i);
+                            }
+                        }
+                        return indices;
+                    })()
+                    : rawAnalysis.x.map((_, i) => i),
+                missingCount: rawAnalysis.dataQuality ? rawAnalysis.dataQuality.missingCount : 0,
+                missingPercent: rawAnalysis.dataQuality ? rawAnalysis.dataQuality.missingPercent : 0,
+            },
+            movingAverage: (() => {
+                if (!rawAnalysis.movingAverages) return null;
+                const key = `${period}-point`;
+                if (rawAnalysis.movingAverages[key]) return rawAnalysis.movingAverages[key];
+                const keys = Object.keys(rawAnalysis.movingAverages);
+                if (keys.length > 0) return rawAnalysis.movingAverages[keys[keys.length - 1]];
+                return null;
+            })(),
+            decomposition: rawAnalysis.seasonal || null,
+            variable: variable,
+        });
+
+        return analysis;
+    }
+
+    // ============================================================
+    // MAIN ANALYSIS FUNCTION (MULTI-FACTOR ORCHESTRATION)
     // ============================================================
 
     async function runAnalysis() {
-        // Validate inputs with active interactive guidance
-        if (!state.selectedVariable) {
-            showNotification('⚠️ Step 1 Missing: Please select an environmental variable above (e.g. Temperature, Precipitation).', 'warning');
+        if (!state.selectedVariables || state.selectedVariables.length === 0) {
+            showNotification('⚠️ Step 1 Missing: Please select at least 1 environmental factor above (up to 5).', 'warning');
             smoothScrollTo('step-variable');
             const cat = document.getElementById('variable-categories');
             if (cat) {
                 cat.classList.add('highlight-pulse');
                 setTimeout(() => cat.classList.remove('highlight-pulse'), 3000);
-            }
-            const tempCard = document.querySelector('.category-card[data-category="temperature"]');
-            if (tempCard) {
-                const list = tempCard.querySelector('.variable-list');
-                const icon = tempCard.querySelector('.expand-icon');
-                if (list) list.style.display = 'block';
-                if (icon) icon.textContent = '▼';
-                tempCard.classList.add('active');
             }
             return;
         }
@@ -1965,20 +2298,13 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Show loading
         showLoading(true);
         document.getElementById('results-section').style.display = 'none';
 
         try {
-            // Fetch data
-            const rawData = await fetchData();
-            state.currentData = rawData;
+            // Parallel data fetch for all selected variables
+            await fetchMultiData();
 
-            // Prepare data for analysis
-            const x = rawData.values.map((_, i) => i);
-            const period = state.temporal === 'monthly' ? 12 : 365;
-
-            // Determine region name
             let regionName = 'selected location';
             const matchedPreset = PRESET_REGIONS.find(r =>
                 Math.abs(r.lat - state.selectedLat) < 1 && Math.abs(r.lon - state.selectedLon) < 1
@@ -1986,73 +2312,56 @@ document.addEventListener('DOMContentLoaded', () => {
             if (matchedPreset) regionName = matchedPreset.name;
             else regionName = `${Math.abs(state.selectedLat).toFixed(1)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(1)}°${state.selectedLon >= 0 ? 'E' : 'W'}`;
 
-            // Run full analysis via EarthStats
-            const rawAnalysis = EarthStats.fullAnalysis({
-                x: x,
-                y: rawData.values,
-                period: period,
-                variableName: state.selectedVariable.name,
-                variableUnit: state.selectedVariable.unit,
-                regionName: regionName,
-                startYear: state.startYear,
-                endYear: state.endYear,
-                temporal: state.temporal,
+            // Analyze each factor with EarthStats
+            state.multiAnalysis = {};
+            state.selectedVariables.forEach(v => {
+                const rawData = state.multiData[v.id];
+                if (rawData) {
+                    state.multiAnalysis[v.id] = analyzeFactor(rawData, v, regionName);
+                }
             });
 
-            // Normalize the analysis result to a consistent shape used by rendering code.
-            // EarthStats.fullAnalysis returns keys: dataQuality, anomalies, regression,
-            // mannKendall, sensSlope, movingAverages (dict), seasonal, summary, x, y.
-            // Rendering helpers expect: cleanData, movingAverage, decomposition.
-            const analysis = Object.assign({}, rawAnalysis, {
-                // cleanData wrapper expected by chart/stats renderers
-                cleanData: {
-                    cleanData: rawAnalysis.y,
-                    validIndices: rawAnalysis.dataQuality
-                        ? (() => {
-                            // Rebuild valid indices from original data
-                            const indices = [];
-                            for (let i = 0; i < rawData.values.length; i++) {
-                                const v = rawData.values[i];
-                                if (v !== null && v !== undefined && !isNaN(v) &&
-                                    v !== -999 && v !== -9999 && v !== -999.0 && v !== -9999.0) {
-                                    indices.push(i);
-                                }
-                            }
-                            return indices;
-                        })()
-                        : rawAnalysis.x.map((_, i) => i),
-                    missingCount: rawAnalysis.dataQuality ? rawAnalysis.dataQuality.missingCount : 0,
-                    missingPercent: rawAnalysis.dataQuality ? rawAnalysis.dataQuality.missingPercent : 0,
-                },
-                // Pick the period-matched moving average (or the largest available)
-                movingAverage: (() => {
-                    if (!rawAnalysis.movingAverages) return null;
-                    const key = `${period}-point`;
-                    if (rawAnalysis.movingAverages[key]) return rawAnalysis.movingAverages[key];
-                    // Fallback to the widest window available
-                    const keys = Object.keys(rawAnalysis.movingAverages);
-                    if (keys.length > 0) return rawAnalysis.movingAverages[keys[keys.length - 1]];
-                    return null;
-                })(),
-                // Map 'seasonal' to 'decomposition' for rendering code
-                decomposition: rawAnalysis.seasonal || null,
-            });
+            // Cross-factor correlations
+            if (state.selectedVariables.length >= 2) {
+                state.correlations = calculateCrossFactorCorrelations(state.multiData);
+                state.focusedFactorId = 'comparison';
+                state.currentView = 'comparison';
+            } else {
+                state.correlations = [];
+                state.focusedFactorId = state.selectedVariables[0].id;
+                state.currentView = 'raw';
+            }
 
-            state.currentAnalysis = analysis;
+            // Set primary pointers
+            const primaryVar = (state.focusedFactorId && state.focusedFactorId !== 'comparison')
+                ? state.selectedVariables.find(v => v.id === state.focusedFactorId)
+                : state.selectedVariables[0];
+            state.selectedVariable = primaryVar;
+            state.currentData = state.multiData[primaryVar.id];
+            state.currentAnalysis = state.multiAnalysis[primaryVar.id];
 
-            // Render results
-            renderChart(rawData, analysis);
-            renderStatistics(analysis);
-            renderSummary(analysis);
+            // Render all UI sections
+            updateToolbarAndTabs();
+            renderFactorFocusToolbar();
+            renderMultiFactorOverview();
+            renderActiveChart();
+            renderStatistics(state.currentAnalysis);
+            renderSummary(state.currentAnalysis);
 
-            // Show results
             document.getElementById('results-section').style.display = 'block';
             smoothScrollTo('results-section');
-            showNotification('Analysis complete!', 'success');
+
+            const factorCount = state.selectedVariables.length;
+            showNotification(
+                factorCount > 1
+                    ? `Multi-factor investigation complete! Analyzed ${factorCount} factors with ${state.correlations.length} cross-couplings.`
+                    : 'Analysis complete!',
+                'success'
+            );
 
             // Save to search & analysis history
             if (typeof saveAnalysisToHistory === 'function') {
-                saveAnalysisToHistory(state.selectedVariable, regionName, state.selectedLat, state.selectedLon, state.startYear, state.endYear, state.temporal, rawData, analysis);
+                saveAnalysisToHistory(state.selectedVariable, regionName, state.selectedLat, state.selectedLon, state.startYear, state.endYear, state.temporal, state.currentData, state.currentAnalysis);
             }
 
         } catch (error) {
@@ -2060,6 +2369,254 @@ document.addEventListener('DOMContentLoaded', () => {
             showNotification(`Error: ${error.message}`, 'error');
         } finally {
             showLoading(false);
+        }
+    }
+
+    // ============================================================
+    // MULTI-FACTOR TOOLBAR & SYNTHESIS RENDERING
+    // ============================================================
+
+    function updateToolbarAndTabs() {
+        const isMulti = state.selectedVariables.length > 1;
+        const focusToolbar = document.getElementById('factor-focus-toolbar');
+        const overviewCard = document.getElementById('multi-factor-overview-card');
+        const tabComp = document.getElementById('tab-comparison');
+        const tabCorr = document.getElementById('tab-correlation');
+        const pairToolbar = document.getElementById('correlation-pair-toolbar');
+
+        if (focusToolbar) focusToolbar.style.display = isMulti ? 'flex' : 'none';
+        if (overviewCard) overviewCard.style.display = isMulti ? 'block' : 'none';
+        if (tabComp) tabComp.style.display = isMulti ? 'inline-block' : 'none';
+        if (tabCorr) tabCorr.style.display = isMulti ? 'inline-block' : 'none';
+        if (pairToolbar) {
+            pairToolbar.style.display = (state.currentView === 'correlation' && state.correlations.length > 0) ? 'flex' : 'none';
+        }
+
+        // Update active tab visual
+        document.querySelectorAll('.chart-tab').forEach(t => {
+            if (t.dataset.view === state.currentView) {
+                t.classList.add('active');
+            } else {
+                t.classList.remove('active');
+            }
+        });
+    }
+
+    function renderFactorFocusToolbar() {
+        const container = document.getElementById('factor-chips-nav');
+        const quickBadge = document.getElementById('correlation-quick-badge');
+        if (!container) return;
+
+        if (state.selectedVariables.length <= 1) {
+            container.innerHTML = '';
+            if (quickBadge) quickBadge.style.display = 'none';
+            return;
+        }
+
+        const compActive = state.focusedFactorId === 'comparison' ? 'active' : '';
+        let html = `
+            <button class="factor-nav-btn ${compActive}" data-focus="comparison">
+                ⚡ All Factors Comparison (Z-Score)
+            </button>
+        `;
+
+        state.selectedVariables.forEach(v => {
+            const isAct = state.focusedFactorId === v.id ? 'active' : '';
+            html += `
+                <button class="factor-nav-btn ${isAct}" data-focus="${v.id}">
+                    ${v.icon || '🌐'} ${v.name}
+                </button>
+            `;
+        });
+
+        container.innerHTML = html;
+
+        // Hook up focus button clicks
+        container.querySelectorAll('.factor-nav-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const focus = btn.dataset.focus;
+                state.focusedFactorId = focus;
+
+                if (focus === 'comparison') {
+                    state.currentView = 'comparison';
+                } else {
+                    state.selectedVariable = state.selectedVariables.find(v => v.id === focus) || state.selectedVariables[0];
+                    state.currentData = state.multiData[state.selectedVariable.id];
+                    state.currentAnalysis = state.multiAnalysis[state.selectedVariable.id];
+                    if (state.currentView === 'comparison') {
+                        state.currentView = 'raw';
+                    }
+                    const titleEl = document.getElementById('stats-card-title');
+                    if (titleEl) titleEl.textContent = `📐 Statistical Analysis: ${state.selectedVariable.name}`;
+                    renderStatistics(state.currentAnalysis);
+                    renderSummary(state.currentAnalysis);
+                }
+
+                updateToolbarAndTabs();
+                renderFactorFocusToolbar();
+                renderActiveChart();
+            });
+        });
+
+        // Quick badge
+        if (quickBadge && state.correlations.length > 0) {
+            const topCorr = state.correlations[0];
+            quickBadge.style.display = 'block';
+            quickBadge.innerHTML = `
+                <span class="badge-pill" title="${topCorr.narrative}">
+                    🔗 Top Coupling: ${topCorr.varA.id} ↔ ${topCorr.varB.id} (r = ${topCorr.r >= 0 ? '+' : ''}${topCorr.r.toFixed(2)})
+                </span>
+            `;
+        }
+    }
+
+    function renderMultiFactorOverview() {
+        const tableContainer = document.getElementById('multi-factor-table-container');
+        const insightsContainer = document.getElementById('cross-factor-insights');
+        const countPill = document.getElementById('multi-factor-count-pill');
+
+        if (countPill) {
+            countPill.textContent = `${state.selectedVariables.length} Factors Analyzed`;
+        }
+
+        if (tableContainer) {
+            const rows = state.selectedVariables.map(v => {
+                const analysis = state.multiAnalysis[v.id];
+                const rawData = state.multiData[v.id];
+                if (!analysis || !rawData) return '';
+
+                const clean = analysis.cleanData.cleanData;
+                const mean = clean.reduce((s, val) => s + val, 0) / clean.length;
+                const min = Math.min(...clean);
+                const max = Math.max(...clean);
+                const mk = analysis.mannKendall;
+                const sen = analysis.sensSlope;
+                const divisor = state.temporal === 'monthly' ? 12 : 365;
+                const senAnnual = (sen.slope * divisor);
+
+                let trendPillClass = 'trend-flat';
+                let trendText = 'Stable';
+                let arrow = '→';
+                if (mk.trend === 'increasing') {
+                    trendPillClass = 'trend-up';
+                    trendText = mk.significant ? 'Significant Increase' : 'Upward';
+                    arrow = '↗️';
+                } else if (mk.trend === 'decreasing') {
+                    trendPillClass = 'trend-down';
+                    trendText = mk.significant ? 'Significant Decrease' : 'Downward';
+                    arrow = '↘️';
+                }
+
+                const startVal = clean[0];
+                const endVal = clean[clean.length - 1];
+                const pctChange = (startVal !== 0) ? (((endVal - startVal) / Math.abs(startVal)) * 100) : 0;
+                const isFocused = state.focusedFactorId === v.id;
+
+                return `
+                    <tr class="${isFocused ? 'focused-row' : ''}">
+                        <td><strong>${v.icon || '🌐'} ${v.name}</strong> <span style="font-size:0.75rem;color:var(--text-secondary);">(${v.id})</span></td>
+                        <td><code>${v.unit}</code></td>
+                        <td>${mean.toFixed(2)}</td>
+                        <td>${min.toFixed(1)} / ${max.toFixed(1)}</td>
+                        <td>
+                            <span class="trend-pill ${trendPillClass}">
+                                ${arrow} ${trendText} (p=${mk.pValue < 0.001 ? '<0.001' : mk.pValue.toFixed(3)})
+                            </span>
+                        </td>
+                        <td><strong>${senAnnual >= 0 ? '+' : ''}${senAnnual.toFixed(4)}</strong> ${v.unit}/yr</td>
+                        <td><span style="color:${pctChange >= 0 ? '#ef5350' : '#42a5f5'};font-weight:600;">${pctChange >= 0 ? '+' : ''}${pctChange.toFixed(1)}%</span></td>
+                        <td>
+                            <button class="action-btn-sm focus-factor-row-btn" data-var="${v.id}" style="padding:4px 8px;font-size:0.75rem;cursor:pointer;border-radius:4px;border:1px solid rgba(59,130,246,0.3);background:rgba(59,130,246,0.1);color:#60a5fa;">
+                                ${isFocused ? '✓ Focused' : 'Focus 🔍'}
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            tableContainer.innerHTML = `
+                <table class="multi-factor-table">
+                    <thead>
+                        <tr>
+                            <th>Environmental Driver</th>
+                            <th>Unit</th>
+                            <th>Mean</th>
+                            <th>Min / Max</th>
+                            <th>Mann-Kendall Trend</th>
+                            <th>Sen's Slope Rate</th>
+                            <th>Period Change</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows}
+                    </tbody>
+                </table>
+            `;
+
+            // Hook up table focus buttons
+            tableContainer.querySelectorAll('.focus-factor-row-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const varId = btn.dataset.var;
+                    state.focusedFactorId = varId;
+                    state.selectedVariable = state.selectedVariables.find(v => v.id === varId);
+                    state.currentData = state.multiData[varId];
+                    state.currentAnalysis = state.multiAnalysis[varId];
+                    if (state.currentView === 'comparison') {
+                        state.currentView = 'raw';
+                    }
+                    const titleEl = document.getElementById('stats-card-title');
+                    if (titleEl) titleEl.textContent = `📐 Statistical Analysis: ${state.selectedVariable.name}`;
+                    renderStatistics(state.currentAnalysis);
+                    renderSummary(state.currentAnalysis);
+                    updateToolbarAndTabs();
+                    renderFactorFocusToolbar();
+                    renderMultiFactorOverview();
+                    renderActiveChart();
+                });
+            });
+        }
+
+        if (insightsContainer) {
+            if (state.correlations.length === 0) {
+                insightsContainer.innerHTML = '';
+                return;
+            }
+
+            const cards = state.correlations.map((corr, idx) => {
+                const rClass = corr.r > 0.2 ? 'positive' : corr.r < -0.2 ? 'negative' : 'neutral';
+                return `
+                    <div class="insight-card">
+                        <div class="insight-header">
+                            <span class="insight-title">${corr.varA.icon || '🌐'} ${corr.varA.name} ↔ ${corr.varB.icon || '🌐'} ${corr.varB.name}</span>
+                            <span class="insight-r ${rClass}">r = ${corr.r >= 0 ? '+' : ''}${corr.r.toFixed(3)}</span>
+                        </div>
+                        <div class="insight-body">
+                            <p style="margin-bottom:8px;">${corr.narrative}</p>
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+                                <span style="font-size:0.75rem;color:var(--text-secondary);">R²: ${(corr.rSquared * 100).toFixed(1)}% | p: ${corr.pValue < 0.001 ? '< 0.001' : corr.pValue.toFixed(4)}</span>
+                                <button class="view-pair-scatter-btn" data-pair-idx="${idx}" style="padding:4px 8px;font-size:0.75rem;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.2);color:#fff;border-radius:4px;cursor:pointer;">
+                                    Scatter Fit 📈
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            insightsContainer.innerHTML = cards;
+
+            // Hook up Scatter Plot buttons
+            insightsContainer.querySelectorAll('.view-pair-scatter-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const pIdx = parseInt(btn.dataset.pairIdx, 10);
+                    state.activeCorrelationPairIndex = pIdx;
+                    state.currentView = 'correlation';
+                    updateToolbarAndTabs();
+                    renderActiveChart();
+                    smoothScrollTo('chart-tabs');
+                });
+            });
         }
     }
 
@@ -2340,7 +2897,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    // CHART VIEW TABS (Raw, Deseasonalized, Anomaly)
+    // CHART VIEW TABS & ACTIVE DISPATCHER
     // ============================================================
 
     function setupChartTabs() {
@@ -2351,25 +2908,304 @@ document.addEventListener('DOMContentLoaded', () => {
                 tab.classList.add('active');
 
                 const view = tab.dataset.view;
-                if (state.currentData && state.currentAnalysis) {
-                    switch (view) {
-                        case 'raw':
-                            renderChart(state.currentData, state.currentAnalysis);
-                            break;
-                        case 'deseasonalized':
-                            renderDeseasonalizedChart();
-                            break;
-                        case 'anomaly':
-                            renderAnomalyChart();
-                            break;
-                    }
-                }
+                state.currentView = view;
+                renderActiveChart();
             });
         });
     }
 
+    function renderActiveChart() {
+        const pairToolbar = document.getElementById('correlation-pair-toolbar');
+        if (pairToolbar) {
+            pairToolbar.style.display = (state.currentView === 'correlation' && state.correlations && state.correlations.length > 0) ? 'flex' : 'none';
+        }
+
+        switch (state.currentView) {
+            case 'comparison':
+                renderComparisonChart();
+                break;
+            case 'correlation':
+                renderCorrelationChart();
+                break;
+            case 'deseasonalized':
+                renderDeseasonalizedChart();
+                break;
+            case 'anomaly':
+                renderAnomalyChart();
+                break;
+            case 'raw':
+            default:
+                renderChart(state.currentData, state.currentAnalysis);
+                break;
+        }
+    }
+
+    // ============================================================
+    // MULTI-FACTOR COMPARISON CHART (Z-SCORE NORMALIZED)
+    // ============================================================
+
+    function renderComparisonChart() {
+        const chartDiv = document.getElementById('chart');
+        if (!chartDiv || !state.selectedVariables || state.selectedVariables.length === 0) return;
+
+        const palette = ['#00e5ff', '#ff5252', '#ffd600', '#69f0ae', '#b388ff', '#ff9ff3', '#54a0ff'];
+        const traces = [];
+
+        state.selectedVariables.forEach((v, idx) => {
+            const rawData = state.multiData[v.id];
+            const analysis = state.multiAnalysis[v.id];
+            if (!rawData || !analysis) return;
+
+            const dates = rawData.dates;
+            const cleanValues = analysis.cleanData.cleanData;
+            if (!cleanValues || cleanValues.length === 0) return;
+
+            // Calculate mean and sample standard deviation
+            const n = cleanValues.length;
+            const mean = cleanValues.reduce((s, val) => s + val, 0) / n;
+            const variance = cleanValues.reduce((s, val) => s + Math.pow(val - mean, 2), 0) / (n > 1 ? n - 1 : 1);
+            const stdDev = Math.sqrt(variance) || 1.0;
+
+            // Standardize into Z-scores
+            const zScores = rawData.values.map(val => {
+                if (val === null || val === undefined || isNaN(val) || val === -999 || val === -9999 || val === -99.99) {
+                    return null;
+                }
+                return (val - mean) / stdDev;
+            });
+
+            const color = palette[idx % palette.length];
+
+            // 1. Z-Score Time Series Trace
+            traces.push({
+                x: dates,
+                y: zScores,
+                type: 'scatter',
+                mode: 'lines',
+                name: `${v.icon || '🌐'} ${v.name} (${v.id})`,
+                line: { color: color, width: 2.2 },
+                customdata: rawData.values,
+                hovertemplate: `<b>${v.name}</b><br>Date: %{x}<br>Standardized: %{y:.2f} σ<br>Physical Value: %{customdata:.2f} ${v.unit}<extra></extra>`
+            });
+
+            // 2. Trendline for Z-scores
+            const validZ = [];
+            const validX = [];
+            zScores.forEach((z, i) => {
+                if (z !== null) {
+                    validZ.push(z);
+                    validX.push(i);
+                }
+            });
+
+            if (validZ.length > 2) {
+                const zMeanX = validX.reduce((s, xi) => s + xi, 0) / validX.length;
+                const zMeanY = validZ.reduce((s, yi) => s + yi, 0) / validZ.length;
+                let num = 0, den = 0;
+                for (let k = 0; k < validZ.length; k++) {
+                    num += (validX[k] - zMeanX) * (validZ[k] - zMeanY);
+                    den += Math.pow(validX[k] - zMeanX, 2);
+                }
+                const zSlope = den > 0 ? num / den : 0;
+                const zIntercept = zMeanY - zSlope * zMeanX;
+                const startX = validX[0];
+                const endX = validX[validX.length - 1];
+
+                const divisor = state.temporal === 'monthly' ? 12 : 365;
+                const annualZRate = zSlope * divisor;
+
+                traces.push({
+                    x: [dates[startX], dates[endX]],
+                    y: [zIntercept + zSlope * startX, zIntercept + zSlope * endX],
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: `${v.id} Trend (${annualZRate >= 0 ? '+' : ''}${annualZRate.toFixed(3)} σ/yr)`,
+                    line: { color: color, width: 2, dash: 'dot' },
+                    hoverinfo: 'skip',
+                    opacity: 0.65
+                });
+            }
+        });
+
+        const layout = {
+            title: {
+                text: `⚡ Multi-Factor Standardized Comparison (${state.selectedVariables.length} Factors)`,
+                font: { size: 18, color: '#1a1a2e' }
+            },
+            xaxis: {
+                title: 'Timeline (Monthly / Daily Observations)',
+                showgrid: true,
+                gridcolor: '#e0e6ed'
+            },
+            yaxis: {
+                title: 'Standardized Anomaly (Z-Score, σ deviations from mean)',
+                showgrid: true,
+                gridcolor: '#e0e6ed',
+                zeroline: true,
+                zerolinecolor: 'rgba(0,0,0,0.5)',
+                zerolinewidth: 2
+            },
+            legend: {
+                orientation: 'h',
+                yanchor: 'bottom',
+                y: -0.35,
+                xanchor: 'center',
+                x: 0.5
+            },
+            margin: { t: 60, r: 30, b: 90, l: 75 },
+            plot_bgcolor: '#fafbfc',
+            paper_bgcolor: '#ffffff',
+            hovermode: 'x unified',
+            font: { family: 'Inter, sans-serif' }
+        };
+
+        const config = {
+            responsive: true,
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+            displaylogo: false
+        };
+
+        Plotly.newPlot(chartDiv, traces, layout, config);
+    }
+
+    // ============================================================
+    // CROSS-FACTOR CORRELATION SCATTER & REGRESSION PLOT
+    // ============================================================
+
+    function renderCorrelationChart() {
+        const chartDiv = document.getElementById('chart');
+        if (!chartDiv || !state.correlations || state.correlations.length === 0) {
+            if (chartDiv) {
+                chartDiv.innerHTML = '<div style="padding:60px 20px;text-align:center;color:#94a3b8;font-size:1rem;">Select 2 or more environmental factors to calculate cross-factor correlations and view regression fit scatter plots.</div>';
+            }
+            return;
+        }
+
+        // Render pair pills
+        const pillsContainer = document.getElementById('pair-pills');
+        if (pillsContainer) {
+            pillsContainer.innerHTML = state.correlations.map((corr, idx) => {
+                const isAct = (idx === (state.activeCorrelationPairIndex || 0)) ? 'active' : '';
+                return `
+                    <button class="pair-pill-btn ${isAct}" data-pair-idx="${idx}">
+                        ${corr.varA.id} ↔ ${corr.varB.id} (r = ${corr.r >= 0 ? '+' : ''}${corr.r.toFixed(2)})
+                    </button>
+                `;
+            }).join('');
+
+            pillsContainer.querySelectorAll('.pair-pill-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    state.activeCorrelationPairIndex = parseInt(btn.dataset.pairIdx, 10);
+                    renderCorrelationChart();
+                });
+            });
+        }
+
+        const pairIdx = Math.min(state.activeCorrelationPairIndex || 0, state.correlations.length - 1);
+        const corr = state.correlations[pairIdx];
+        const vA = corr.varA;
+        const vB = corr.varB;
+        const pairs = corr.pairs;
+
+        const xVals = pairs.map(p => p.a);
+        const yVals = pairs.map(p => p.b);
+        const hoverTexts = pairs.map(p => `<b>Date: ${p.date}</b><br>${vA.name}: ${p.a.toFixed(2)} ${vA.unit}<br>${vB.name}: ${p.b.toFixed(2)} ${vB.unit}`);
+
+        const traces = [];
+
+        // Synchronous scatter points
+        traces.push({
+            x: xVals,
+            y: yVals,
+            text: hoverTexts,
+            type: 'scatter',
+            mode: 'markers',
+            name: `${vA.id} vs ${vB.id} Synchronous Observations`,
+            marker: {
+                color: '#0284c7',
+                size: 6.5,
+                opacity: 0.75,
+                line: { color: '#0369a1', width: 1 }
+            },
+            hoverinfo: 'text'
+        });
+
+        // Linear regression fit line
+        const minX = Math.min(...xVals);
+        const maxX = Math.max(...xVals);
+        const yStart = corr.intercept + corr.slope * minX;
+        const yEnd = corr.intercept + corr.slope * maxX;
+
+        traces.push({
+            x: [minX, maxX],
+            y: [yStart, yEnd],
+            type: 'scatter',
+            mode: 'lines',
+            name: `Linear Fit: ${vB.id} = ${corr.slope.toFixed(4)}·${vA.id} ${corr.intercept >= 0 ? '+' : ''}${corr.intercept.toFixed(2)}`,
+            line: { color: '#e11d48', width: 3 },
+            hoverinfo: 'name'
+        });
+
+        const layout = {
+            title: {
+                text: `🔗 Cross-Factor Correlation: ${vA.name} vs ${vB.name}`,
+                font: { size: 18, color: '#1a1a2e' }
+            },
+            xaxis: {
+                title: `${vA.name} (${vA.unit})`,
+                showgrid: true,
+                gridcolor: '#e0e6ed'
+            },
+            yaxis: {
+                title: `${vB.name} (${vB.unit})`,
+                showgrid: true,
+                gridcolor: '#e0e6ed'
+            },
+            annotations: [
+                {
+                    xref: 'paper',
+                    yref: 'paper',
+                    x: 0.03,
+                    y: 0.95,
+                    text: `<b>Pearson r:</b> ${corr.r >= 0 ? '+' : ''}${corr.r.toFixed(3)}<br><b>R² (Variance):</b> ${(corr.rSquared * 100).toFixed(1)}%<br><b>p-value:</b> ${corr.pValue < 0.001 ? '< 0.001' : corr.pValue.toFixed(4)}<br><b>Dynamic:</b> ${corr.relationship}`,
+                    showarrow: false,
+                    bgcolor: 'rgba(255, 255, 255, 0.92)',
+                    bordercolor: '#cbd5e1',
+                    borderwidth: 1,
+                    borderpad: 8,
+                    font: { size: 12, family: 'Inter, sans-serif' }
+                }
+            ],
+            legend: {
+                orientation: 'h',
+                yanchor: 'bottom',
+                y: -0.3,
+                xanchor: 'center',
+                x: 0.5
+            },
+            margin: { t: 60, r: 30, b: 80, l: 75 },
+            plot_bgcolor: '#fafbfc',
+            paper_bgcolor: '#ffffff',
+            font: { family: 'Inter, sans-serif' }
+        };
+
+        const config = {
+            responsive: true,
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+            displaylogo: false
+        };
+
+        Plotly.newPlot(chartDiv, traces, layout, config);
+    }
+
+    // ============================================================
+    // DESEASONALIZED & ANOMALY CHARTS (FOR FOCUSED FACTOR)
+    // ============================================================
+
     function renderDeseasonalizedChart() {
-        if (!state.currentAnalysis.decomposition) return;
+        if (!state.currentAnalysis || !state.currentAnalysis.decomposition || !state.currentData) return;
 
         const dates = state.currentData.dates;
         const validIdx = state.currentAnalysis.cleanData.validIndices;
@@ -2391,7 +3227,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 x: dates, y: fullDeseasonalized,
                 type: 'scatter', mode: 'lines',
                 name: 'Deseasonalized Data',
-                line: { color: '#42a5f5', width: 1.5 },
+                line: { color: '#0284c7', width: 1.8 },
             },
             {
                 x: [dates[firstValid], dates[lastValid]],
@@ -2416,7 +3252,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderAnomalyChart() {
-        if (!state.currentAnalysis.anomalies) return;
+        if (!state.currentAnalysis || !state.currentAnalysis.anomalies || !state.currentData) return;
 
         const dates = state.currentData.dates;
         const validIdx = state.currentAnalysis.cleanData.validIndices;
@@ -2429,8 +3265,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // Color bars by positive/negative
-        const colors = fullAnomalies.map(v => v === null ? '#ccc' : v >= 0 ? '#c62828' : '#1565c0');
+        const colors = fullAnomalies.map(v => v === null ? '#ccc' : v >= 0 ? '#ef4444' : '#3b82f6');
 
         const traces = [{
             x: dates, y: fullAnomalies,
@@ -2505,22 +3340,32 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!btn) return;
             const demo = demos[parseInt(btn.dataset.demo)];
 
-            // Set state
-            state.selectedVariable = VARIABLES.find(v => v.id === demo.variable);
+            // Set state for multi-factor framework
+            const demoVar = VARIABLES.find(v => v.id === demo.variable);
+            state.selectedVariable = demoVar;
+            state.selectedVariables = [demoVar];
             state.startYear = demo.startYear;
             state.endYear = demo.endYear;
             state.temporal = 'monthly';
 
-            // Update UI
+            // Update UI inputs
             document.getElementById('start-year').value = demo.startYear;
             document.getElementById('end-year').value = demo.endYear;
 
-            // Select variable in UI
-            const radio = document.querySelector(`input[value="${demo.variable}"]`);
-            if (radio) {
-                radio.checked = true;
-                // Expand the right category
-                const card = radio.closest('.category-card');
+            // Update checkboxes and chips
+            document.querySelectorAll('input[name="variable"]').forEach(cb => {
+                cb.checked = (cb.value === demo.variable);
+                const item = cb.closest('.variable-item');
+                if (item) {
+                    if (cb.checked) item.classList.add('selected');
+                    else item.classList.remove('selected');
+                }
+            });
+
+            // Expand relevant category
+            const targetCb = document.querySelector(`input[value="${demo.variable}"]`);
+            if (targetCb) {
+                const card = targetCb.closest('.category-card');
                 if (card) {
                     document.querySelectorAll('.variable-list').forEach(l => l.style.display = 'none');
                     document.querySelectorAll('.expand-icon').forEach(i => i.textContent = '▶');
@@ -2528,18 +3373,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     card.querySelector('.expand-icon').textContent = '▼';
                     card.classList.add('active');
                 }
-                document.querySelectorAll('.variable-item').forEach(item => item.classList.remove('selected'));
-                radio.closest('.variable-item').classList.add('selected');
             }
+
+            renderSelectedFactorChips();
 
             // Set location
             setLocation(demo.lat, demo.lon);
             state.map.setView([demo.lat, demo.lon], 5);
 
-            // Update summary
+            // Update summary & run
             updateSelectionSummary();
-
-            // Run analysis
             runAnalysis();
         });
     }
@@ -3059,6 +3902,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Restore state
         state.selectedVariable = VARIABLES.find(v => v.id === item.variable.id) || item.variable;
+        state.selectedVariables = [state.selectedVariable];
+        state.focusedFactorId = state.selectedVariable.id;
+        state.currentView = 'raw';
         state.selectedLat = item.region.lat;
         state.selectedLon = item.region.lon;
         state.startYear = item.time.startYear;
@@ -3070,6 +3916,19 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('end-year').value = state.endYear;
         const temporalSelect = document.getElementById('temporal-select');
         if (temporalSelect) temporalSelect.value = state.temporal;
+
+        // Select checkbox in UI
+        document.querySelectorAll('input[name="variable"]').forEach(cb => {
+            cb.checked = (cb.value === item.variable.id);
+            const varItem = cb.closest('.variable-item');
+            if (varItem) {
+                if (cb.checked) varItem.classList.add('selected');
+                else varItem.classList.remove('selected');
+            }
+        });
+
+        renderSelectedFactorChips();
+        updateSelectionSummary();
 
         // Select radio button in UI
         const radio = document.querySelector(`input[name="variable"][value="${item.variable.id}"]`);
@@ -3245,6 +4104,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const isMulti = state.selectedVariables && state.selectedVariables.length > 1;
         const analysis = state.currentAnalysis;
         const rawData = state.currentData;
         const variable = state.selectedVariable;
@@ -3262,7 +4122,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (state.searchResultName) regionName = state.searchResultName.split(',')[0];
         else regionName = `${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'}`;
 
-        showNotification('Rendering chart image & assembling Excel workbook (.xlsx)...', 'info');
+        showNotification('Rendering high-res chart image & assembling multi-factor Excel workbook (.xlsx)...', 'info');
 
         // 1. Capture High-Resolution Chart Image from Plotly
         const chartEl = document.getElementById('chart');
@@ -3271,8 +4131,8 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 chartDataUrl = await Plotly.toImage(chartEl, {
                     format: 'png',
-                    width: 1000,
-                    height: 500,
+                    width: 1100,
+                    height: 520,
                     scale: 2
                 });
             } catch (err) {
@@ -3289,185 +4149,474 @@ document.addEventListener('DOMContentLoaded', () => {
                 workbook.created = new Date();
                 workbook.modified = new Date();
 
-                // --------------------------------------------------------
-                // SHEET 1: Summary & Embedded Chart
-                // --------------------------------------------------------
-                const sheet1 = workbook.addWorksheet('Summary & Chart', {
-                    views: [{ showGridLines: true }]
-                });
+                if (isMulti) {
+                    // ========================================================
+                    // MULTI-FACTOR WORKBOOK
+                    // ========================================================
 
-                // Title Banner
-                sheet1.mergeCells('A1:J1');
-                const titleCell = sheet1.getCell('A1');
-                titleCell.value = '🛰️ NASA-EARTH Detective Trend — Climate & Meteorological Investigation Report';
-                titleCell.font = { name: 'Calibri', size: 15, bold: true, color: { argb: 'FFFFFFFF' } };
-                titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3D91' } };
-                titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
-                sheet1.getRow(1).height = 36;
-
-                // Investigation Metadata
-                sheet1.getCell('A3').value = 'Investigation Variable:';
-                sheet1.getCell('B3').value = `${variable.name} (${variable.id})`;
-                sheet1.getCell('A3').font = { bold: true };
-                sheet1.getCell('B3').font = { bold: true, color: { argb: 'FF0B3D91' } };
-
-                sheet1.getCell('D3').value = 'Target Location:';
-                sheet1.getCell('E3').value = `${regionName} (Lat: ${state.selectedLat}, Lon: ${state.selectedLon})`;
-                sheet1.getCell('D3').font = { bold: true };
-
-                sheet1.getCell('A4').value = 'Measurement Unit:';
-                sheet1.getCell('B4').value = variable.unit;
-                sheet1.getCell('A4').font = { bold: true };
-
-                sheet1.getCell('D4').value = 'Analysis Period:';
-                sheet1.getCell('E4').value = `${state.startYear} – ${state.endYear} (${state.temporal})`;
-                sheet1.getCell('D4').font = { bold: true };
-
-                sheet1.getCell('A5').value = 'Data Source:';
-                sheet1.getCell('B5').value = 'NASA POWER (MERRA-2 & GLDAS Satellite/Reanalysis)';
-                sheet1.getCell('A5').font = { bold: true };
-
-                sheet1.getCell('D5').value = 'Report Timestamp:';
-                sheet1.getCell('E5').value = new Date().toLocaleString();
-                sheet1.getCell('D5').font = { bold: true };
-
-                let nextRow = 8;
-
-                // Embed the High-Res Chart Image directly into Sheet 1
-                if (chartDataUrl) {
-                    const base64Data = chartDataUrl.replace(/^data:image\/png;base64,/, '');
-                    const imageId = workbook.addImage({
-                        base64: base64Data,
-                        extension: 'png',
+                    // --------------------------------------------------------
+                    // SHEET 1: Multi-Factor Synthesis & Comparative Overview
+                    // --------------------------------------------------------
+                    const sheet1 = workbook.addWorksheet('Multi-Factor Synthesis', {
+                        views: [{ showGridLines: true }]
                     });
-                    sheet1.addImage(imageId, {
-                        tl: { col: 0.5, row: 6.5 },
-                        br: { col: 9.5, row: 24.5 }
-                    });
-                    nextRow = 26;
-                }
 
-                // Section Header: Statistical Test Results
-                sheet1.mergeCells(`A${nextRow}:E${nextRow}`);
-                const statsHeader = sheet1.getCell(`A${nextRow}`);
-                statsHeader.value = '🔬 Statistical Hypothesis & Trend Verification';
-                statsHeader.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
-                statsHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565C0' } };
-                sheet1.getRow(nextRow).height = 26;
-                nextRow++;
+                    // Title Banner
+                    sheet1.mergeCells('A1:K1');
+                    const titleCell = sheet1.getCell('A1');
+                    titleCell.value = '🛰️ NASA-EARTH Detective Trend — Multi-Factor Climate Synthesis Report';
+                    titleCell.font = { name: 'Calibri', size: 15, bold: true, color: { argb: 'FFFFFFFF' } };
+                    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3D91' } };
+                    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+                    sheet1.getRow(1).height = 36;
 
-                // Table Header
-                sheet1.getRow(nextRow).values = ['Statistical Metric', 'Numerical Value', 'Measurement Unit', 'Significance / Interpretation'];
-                sheet1.getRow(nextRow).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-                ['A', 'B', 'C', 'D'].forEach(col => {
-                    sheet1.getCell(`${col}${nextRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF263238' } };
-                    sheet1.getCell(`${col}${nextRow}`).alignment = { vertical: 'middle' };
-                });
-                sheet1.getRow(nextRow).height = 22;
-                nextRow++;
+                    // Metadata
+                    sheet1.getCell('A3').value = 'Target Region:';
+                    sheet1.getCell('B3').value = `${regionName} (Lat: ${state.selectedLat}, Lon: ${state.selectedLon})`;
+                    sheet1.getCell('A3').font = { bold: true };
+                    sheet1.getCell('B3').font = { bold: true, color: { argb: 'FF0B3D91' } };
 
-                // Statistical Rows
-                const statsRows = [
-                    ['Linear Regression (OLS) Rate', (reg.slope * divisor).toFixed(5), `${variable.unit}/year`, `R² = ${(reg.rSquared * 100).toFixed(2)}%`],
-                    ['Linear Regression Intercept', reg.intercept.toFixed(4), variable.unit, 'Baseline fit value'],
-                    ['Regression p-value (t-test)', reg.pValue < 0.001 ? '< 0.001' : reg.pValue.toFixed(6), 'p-value', reg.pValue < 0.05 ? 'Statistically Significant (p < 0.05)' : 'Not Significant'],
-                    ['Mann-Kendall Trend Direction', mk.trend, 'Direction', mk.significant ? 'Significant Monotonic Trend' : 'No Significant Trend'],
-                    ['Mann-Kendall Tau (τ)', mk.tau.toFixed(4), 'Rank Correlation', `S = ${mk.S}, Var(S) = ${mk.varS ? mk.varS.toFixed(1) : 'N/A'}`],
-                    ['Mann-Kendall p-value', mk.pValue < 0.001 ? '< 0.001' : mk.pValue.toFixed(6), 'p-value', mk.significant ? 'p < 0.05 (Confirms Trend)' : 'p ≥ 0.05'],
-                    ["Sen's Slope Estimator", (sen.slope * divisor).toFixed(5), `${variable.unit}/year`, 'Non-parametric median slope'],
-                    ['95% Confidence Lower Bound', (sen.ciLower * divisor).toFixed(5), `${variable.unit}/year`, 'Robust lower bound'],
-                    ['95% Confidence Upper Bound', (sen.ciUpper * divisor).toFixed(5), `${variable.unit}/year`, 'Robust upper bound'],
-                    ['Total Observations', rawData.dates.length, 'Data Points', `${analysis.cleanData.cleanData.length} valid (${analysis.cleanData.missingPercent.toFixed(1)}% missing)`]
-                ];
+                    sheet1.getCell('E3').value = 'Analyzed Drivers:';
+                    sheet1.getCell('F3').value = state.selectedVariables.map(v => `${v.name} (${v.id})`).join(', ');
+                    sheet1.getCell('E3').font = { bold: true };
 
-                statsRows.forEach((r, idx) => {
-                    const row = sheet1.getRow(nextRow);
-                    row.values = r;
-                    if (idx % 2 === 1) {
-                        ['A', 'B', 'C', 'D'].forEach(c => {
-                            sheet1.getCell(`${c}${nextRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F7FA' } };
+                    sheet1.getCell('A4').value = 'Observation Window:';
+                    sheet1.getCell('B4').value = `${state.startYear} – ${state.endYear} (${state.temporal})`;
+                    sheet1.getCell('A4').font = { bold: true };
+
+                    sheet1.getCell('E4').value = 'Report Timestamp:';
+                    sheet1.getCell('F4').value = new Date().toLocaleString();
+                    sheet1.getCell('E4').font = { bold: true };
+
+                    let nextRow = 7;
+
+                    // Embed Chart Image
+                    if (chartDataUrl) {
+                        const base64Data = chartDataUrl.replace(/^data:image\/png;base64,/, '');
+                        const imageId = workbook.addImage({
+                            base64: base64Data,
+                            extension: 'png',
                         });
+                        sheet1.addImage(imageId, {
+                            tl: { col: 0.5, row: 5.5 },
+                            br: { col: 10.5, row: 23.5 }
+                        });
+                        nextRow = 25;
                     }
+
+                    // Section Header: Comparative Synthesis Table
+                    sheet1.mergeCells(`A${nextRow}:K${nextRow}`);
+                    const synHeader = sheet1.getCell(`A${nextRow}`);
+                    synHeader.value = '📊 Comparative Synthesis Table Across All Selected Climate Factors';
+                    synHeader.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
+                    synHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565C0' } };
+                    sheet1.getRow(nextRow).height = 26;
                     nextRow++;
-                });
 
-                sheet1.columns = [
-                    { width: 32 },
-                    { width: 22 },
-                    { width: 22 },
-                    { width: 38 }
-                ];
+                    sheet1.getRow(nextRow).values = [
+                        'Driver Name', 'Parameter Code', 'Unit', 'Valid Obs', 'Mean', 'Min', 'Max',
+                        'Mann-Kendall Trend', 'MK p-value', "Sen's Slope (/year)", 'Net Change (%)'
+                    ];
+                    sheet1.getRow(nextRow).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                    ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'].forEach(c => {
+                        sheet1.getCell(`${c}${nextRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF263238' } };
+                    });
+                    sheet1.getRow(nextRow).height = 22;
+                    nextRow++;
 
-                // --------------------------------------------------------
-                // SHEET 2: Full Time Series Numbers
-                // --------------------------------------------------------
-                const sheet2 = workbook.addWorksheet('Time Series Data', {
-                    views: [{ showGridLines: true }]
-                });
+                    state.selectedVariables.forEach((v, idx) => {
+                        const a = state.multiAnalysis[v.id];
+                        const d = state.multiData[v.id];
+                        if (!a || !d) return;
 
-                sheet2.getRow(1).values = [
-                    'Date',
-                    `Observed ${variable.name} (${variable.unit})`,
-                    `12-Month Moving Average (${variable.unit})`,
-                    `Climatological Anomaly (${variable.unit})`,
-                    `Linear Trendline (${variable.unit})`
-                ];
-                sheet2.getRow(1).height = 28;
-                sheet2.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-                ['A', 'B', 'C', 'D', 'E'].forEach(col => {
-                    sheet2.getCell(`${col}1`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3D91' } };
-                    sheet2.getCell(`${col}1`).alignment = { vertical: 'middle', horizontal: 'center' };
-                });
+                        const clean = a.cleanData.cleanData;
+                        const mean = clean.reduce((s, val) => s + val, 0) / clean.length;
+                        const min = Math.min(...clean);
+                        const max = Math.max(...clean);
+                        const sAnnual = a.sensSlope.slope * divisor;
+                        const pctChg = clean[0] !== 0 ? (((clean[clean.length - 1] - clean[0]) / Math.abs(clean[0])) * 100) : 0;
 
-                const validIdx = analysis.cleanData.validIndices;
-                const ma = analysis.movingAverage;
-                const anomalies = analysis.anomalies;
+                        const row = sheet1.getRow(nextRow);
+                        row.values = [
+                            v.name,
+                            v.id,
+                            v.unit,
+                            clean.length,
+                            Number(mean.toFixed(2)),
+                            Number(min.toFixed(2)),
+                            Number(max.toFixed(2)),
+                            a.mannKendall.trend.toUpperCase(),
+                            a.mannKendall.pValue < 0.001 ? '< 0.001' : Number(a.mannKendall.pValue.toFixed(4)),
+                            Number(sAnnual.toFixed(4)),
+                            Number(pctChg.toFixed(1))
+                        ];
 
-                for (let i = 0; i < rawData.dates.length; i++) {
-                    const dateStr = rawData.dates[i];
-                    const cleanIdx = validIdx.indexOf(i);
-                    const isValid = cleanIdx !== -1;
-                    const rawVal = isValid ? Number(rawData.values[i]) : null;
-                    const maVal = (isValid && ma && ma[cleanIdx] !== null && ma[cleanIdx] !== undefined) ? Number(ma[cleanIdx].toFixed(4)) : null;
-                    const anomVal = (isValid && anomalies && anomalies[cleanIdx] !== undefined && !isNaN(anomalies[cleanIdx])) ? Number(anomalies[cleanIdx].toFixed(4)) : null;
-                    const trendVal = Number((reg.slope * i + reg.intercept).toFixed(4));
+                        if (idx % 2 === 1) {
+                            ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'].forEach(c => {
+                                sheet1.getCell(`${c}${nextRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F7FA' } };
+                            });
+                        }
+                        nextRow++;
+                    });
+                    nextRow += 2;
 
-                    const row = sheet2.addRow([
-                        dateStr,
-                        rawVal !== null ? rawVal : '',
-                        maVal !== null ? maVal : '',
-                        anomVal !== null ? anomVal : '',
-                        trendVal
-                    ]);
+                    // Section Header: Cross-Factor Correlations
+                    if (state.correlations && state.correlations.length > 0) {
+                        sheet1.mergeCells(`A${nextRow}:K${nextRow}`);
+                        const corrHeader = sheet1.getCell(`A${nextRow}`);
+                        corrHeader.value = '🔗 Cross-Factor Pearson Correlation Matrix & Environmental Coupling Dynamics';
+                        corrHeader.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
+                        corrHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0D47A1' } };
+                        sheet1.getRow(nextRow).height = 26;
+                        nextRow++;
 
-                    if (i % 2 === 1) {
-                        ['A', 'B', 'C', 'D', 'E'].forEach(c => {
-                            row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFC' } };
+                        sheet1.getRow(nextRow).values = [
+                            'Driver Pair', 'Factor A', 'Factor B', 'Pearson r', 'R² Variance (%)',
+                            'p-value', 'Coupling Dynamic', 'Detective Scientific Interpretation'
+                        ];
+                        sheet1.getRow(nextRow).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                        ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].forEach(c => {
+                            sheet1.getCell(`${c}${nextRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF263238' } };
+                        });
+                        sheet1.getRow(nextRow).height = 22;
+                        nextRow++;
+
+                        state.correlations.forEach((corr, idx) => {
+                            const row = sheet1.getRow(nextRow);
+                            row.values = [
+                                `${corr.varA.id} ↔ ${corr.varB.id}`,
+                                corr.varA.name,
+                                corr.varB.name,
+                                Number(corr.r.toFixed(4)),
+                                Number((corr.rSquared * 100).toFixed(2)),
+                                corr.pValue < 0.001 ? '< 0.001' : Number(corr.pValue.toFixed(5)),
+                                corr.relationship,
+                                corr.narrative
+                            ];
+
+                            if (idx % 2 === 1) {
+                                ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].forEach(c => {
+                                    sheet1.getCell(`${c}${nextRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F7FA' } };
+                                });
+                            }
+                            nextRow++;
                         });
                     }
-                }
 
-                sheet2.columns = [
-                    { width: 16 },
-                    { width: 30 },
-                    { width: 28 },
-                    { width: 28 },
-                    { width: 25 }
-                ];
+                    sheet1.columns = [
+                        { width: 26 }, { width: 16 }, { width: 14 }, { width: 12 }, { width: 14 },
+                        { width: 14 }, { width: 14 }, { width: 22 }, { width: 14 }, { width: 20 }, { width: 45 }
+                    ];
+
+                    // --------------------------------------------------------
+                    // SHEET 2: Unified Multi-Factor Observations & Z-Scores
+                    // --------------------------------------------------------
+                    const sheet2 = workbook.addWorksheet('Unified Observations', {
+                        views: [{ showGridLines: true }]
+                    });
+
+                    const primaryDates = rawData.dates;
+                    const headerValues = ['Date'];
+                    state.selectedVariables.forEach(v => {
+                        headerValues.push(`${v.name} (${v.unit})`);
+                    });
+                    state.selectedVariables.forEach(v => {
+                        headerValues.push(`${v.id} (Standardized Z-Score)`);
+                    });
+
+                    sheet2.getRow(1).values = headerValues;
+                    sheet2.getRow(1).height = 28;
+                    sheet2.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+
+                    for (let colIdx = 1; colIdx <= headerValues.length; colIdx++) {
+                        sheet2.getRow(1).getCell(colIdx).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3D91' } };
+                        sheet2.getRow(1).getCell(colIdx).alignment = { vertical: 'middle', horizontal: 'center' };
+                    }
+
+                    // Precalculate means & stddevs for Z-score columns
+                    const varStats = {};
+                    state.selectedVariables.forEach(v => {
+                        const a = state.multiAnalysis[v.id];
+                        if (a && a.cleanData.cleanData.length > 0) {
+                            const c = a.cleanData.cleanData;
+                            const m = c.reduce((s, val) => s + val, 0) / c.length;
+                            const variance = c.reduce((s, val) => s + Math.pow(val - m, 2), 0) / (c.length > 1 ? c.length - 1 : 1);
+                            varStats[v.id] = { mean: m, stdDev: Math.sqrt(variance) || 1.0 };
+                        }
+                    });
+
+                    for (let i = 0; i < primaryDates.length; i++) {
+                        const dateStr = primaryDates[i];
+                        const rowData = [dateStr];
+
+                        // Raw values
+                        state.selectedVariables.forEach(v => {
+                            const d = state.multiData[v.id];
+                            const val = d && d.values[i] !== undefined && d.values[i] !== -999 && d.values[i] !== -9999 ? Number(d.values[i]) : '';
+                            rowData.push(val);
+                        });
+
+                        // Standardized Z-Scores
+                        state.selectedVariables.forEach(v => {
+                            const d = state.multiData[v.id];
+                            const stats = varStats[v.id];
+                            if (d && stats && d.values[i] !== undefined && d.values[i] !== -999 && d.values[i] !== -9999) {
+                                const z = Number(((d.values[i] - stats.mean) / stats.stdDev).toFixed(3));
+                                rowData.push(z);
+                            } else {
+                                rowData.push('');
+                            }
+                        });
+
+                        const row = sheet2.addRow(rowData);
+                        if (i % 2 === 1) {
+                            for (let colIdx = 1; colIdx <= rowData.length; colIdx++) {
+                                row.getCell(colIdx).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFC' } };
+                            }
+                        }
+                    }
+
+                    const colWidths = [{ width: 14 }];
+                    state.selectedVariables.forEach(() => colWidths.push({ width: 28 }));
+                    state.selectedVariables.forEach(() => colWidths.push({ width: 24 }));
+                    sheet2.columns = colWidths;
+
+                    // --------------------------------------------------------
+                    // INDIVIDUAL SHEETS FOR EACH FACTOR
+                    // --------------------------------------------------------
+                    state.selectedVariables.forEach(v => {
+                        const a = state.multiAnalysis[v.id];
+                        const d = state.multiData[v.id];
+                        if (!a || !d) return;
+
+                        const factorSheet = workbook.addWorksheet(`${v.id} Time Series`, {
+                            views: [{ showGridLines: true }]
+                        });
+
+                        factorSheet.getRow(1).values = [
+                            'Date',
+                            `Observed Value (${v.unit})`,
+                            `12-Month Moving Average (${v.unit})`,
+                            `Climatological Anomaly (${v.unit})`,
+                            `Linear Trendline (${v.unit})`
+                        ];
+                        factorSheet.getRow(1).height = 26;
+                        factorSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                        ['A', 'B', 'C', 'D', 'E'].forEach(col => {
+                            factorSheet.getCell(`${col}1`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565C0' } };
+                        });
+
+                        const vIdx = a.cleanData.validIndices;
+                        const vMa = a.movingAverage;
+                        const vAnom = a.anomalies;
+                        const vReg = a.regression;
+
+                        for (let i = 0; i < d.dates.length; i++) {
+                            const dateStr = d.dates[i];
+                            const cIdx = vIdx.indexOf(i);
+                            const isValid = cIdx !== -1;
+                            const rawVal = isValid ? Number(d.values[i]) : '';
+                            const maVal = (isValid && vMa && vMa[cIdx] !== null && vMa[cIdx] !== undefined) ? Number(vMa[cIdx].toFixed(4)) : '';
+                            const anomVal = (isValid && vAnom && vAnom[cIdx] !== undefined && !isNaN(vAnom[cIdx])) ? Number(vAnom[cIdx].toFixed(4)) : '';
+                            const trendVal = vReg ? Number((vReg.slope * i + vReg.intercept).toFixed(4)) : '';
+
+                            const row = factorSheet.addRow([dateStr, rawVal, maVal, anomVal, trendVal]);
+                            if (i % 2 === 1) {
+                                ['A', 'B', 'C', 'D', 'E'].forEach(c => {
+                                    row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFC' } };
+                                });
+                            }
+                        }
+
+                        factorSheet.columns = [
+                            { width: 14 }, { width: 28 }, { width: 28 }, { width: 28 }, { width: 24 }
+                        ];
+                    });
+
+                } else {
+                    // ========================================================
+                    // SINGLE FACTOR WORKBOOK
+                    // ========================================================
+
+                    // --------------------------------------------------------
+                    // SHEET 1: Summary & Embedded Chart
+                    // --------------------------------------------------------
+                    const sheet1 = workbook.addWorksheet('Summary & Chart', {
+                        views: [{ showGridLines: true }]
+                    });
+
+                    // Title Banner
+                    sheet1.mergeCells('A1:J1');
+                    const titleCell = sheet1.getCell('A1');
+                    titleCell.value = '🛰️ NASA-EARTH Detective Trend — Climate & Meteorological Investigation Report';
+                    titleCell.font = { name: 'Calibri', size: 15, bold: true, color: { argb: 'FFFFFFFF' } };
+                    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3D91' } };
+                    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+                    sheet1.getRow(1).height = 36;
+
+                    // Investigation Metadata
+                    sheet1.getCell('A3').value = 'Investigation Variable:';
+                    sheet1.getCell('B3').value = `${variable.name} (${variable.id})`;
+                    sheet1.getCell('A3').font = { bold: true };
+                    sheet1.getCell('B3').font = { bold: true, color: { argb: 'FF0B3D91' } };
+
+                    sheet1.getCell('D3').value = 'Target Location:';
+                    sheet1.getCell('E3').value = `${regionName} (Lat: ${state.selectedLat}, Lon: ${state.selectedLon})`;
+                    sheet1.getCell('D3').font = { bold: true };
+
+                    sheet1.getCell('A4').value = 'Measurement Unit:';
+                    sheet1.getCell('B4').value = variable.unit;
+                    sheet1.getCell('A4').font = { bold: true };
+
+                    sheet1.getCell('D4').value = 'Analysis Period:';
+                    sheet1.getCell('E4').value = `${state.startYear} – ${state.endYear} (${state.temporal})`;
+                    sheet1.getCell('D4').font = { bold: true };
+
+                    sheet1.getCell('A5').value = 'Data Source:';
+                    sheet1.getCell('B5').value = 'NASA POWER (MERRA-2 & GLDAS Satellite/Reanalysis)';
+                    sheet1.getCell('A5').font = { bold: true };
+
+                    sheet1.getCell('D5').value = 'Report Timestamp:';
+                    sheet1.getCell('E5').value = new Date().toLocaleString();
+                    sheet1.getCell('D5').font = { bold: true };
+
+                    let nextRow = 8;
+
+                    // Embed Chart Image
+                    if (chartDataUrl) {
+                        const base64Data = chartDataUrl.replace(/^data:image\/png;base64,/, '');
+                        const imageId = workbook.addImage({
+                            base64: base64Data,
+                            extension: 'png',
+                        });
+                        sheet1.addImage(imageId, {
+                            tl: { col: 0.5, row: 6.5 },
+                            br: { col: 9.5, row: 24.5 }
+                        });
+                        nextRow = 26;
+                    }
+
+                    // Statistical Test Results
+                    sheet1.mergeCells(`A${nextRow}:E${nextRow}`);
+                    const statsHeader = sheet1.getCell(`A${nextRow}`);
+                    statsHeader.value = '🔬 Statistical Hypothesis & Trend Verification';
+                    statsHeader.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
+                    statsHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565C0' } };
+                    sheet1.getRow(nextRow).height = 26;
+                    nextRow++;
+
+                    sheet1.getRow(nextRow).values = ['Statistical Metric', 'Numerical Value', 'Measurement Unit', 'Significance / Interpretation'];
+                    sheet1.getRow(nextRow).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                    ['A', 'B', 'C', 'D'].forEach(col => {
+                        sheet1.getCell(`${col}${nextRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF263238' } };
+                        sheet1.getCell(`${col}${nextRow}`).alignment = { vertical: 'middle' };
+                    });
+                    sheet1.getRow(nextRow).height = 22;
+                    nextRow++;
+
+                    const statsRows = [
+                        ['Linear Regression (OLS) Rate', (reg.slope * divisor).toFixed(5), `${variable.unit}/year`, `R² = ${(reg.rSquared * 100).toFixed(2)}%`],
+                        ['Linear Regression Intercept', reg.intercept.toFixed(4), variable.unit, 'Baseline fit value'],
+                        ['Regression p-value (t-test)', reg.pValue < 0.001 ? '< 0.001' : reg.pValue.toFixed(6), 'p-value', reg.pValue < 0.05 ? 'Statistically Significant (p < 0.05)' : 'Not Significant'],
+                        ['Mann-Kendall Trend Direction', mk.trend, 'Direction', mk.significant ? 'Significant Monotonic Trend' : 'No Significant Trend'],
+                        ['Mann-Kendall Tau (τ)', mk.tau.toFixed(4), 'Rank Correlation', `S = ${mk.S}, Var(S) = ${mk.varS ? mk.varS.toFixed(1) : 'N/A'}`],
+                        ['Mann-Kendall p-value', mk.pValue < 0.001 ? '< 0.001' : mk.pValue.toFixed(6), 'p-value', mk.significant ? 'p < 0.05 (Confirms Trend)' : 'p ≥ 0.05'],
+                        ["Sen's Slope Estimator", (sen.slope * divisor).toFixed(5), `${variable.unit}/year`, 'Non-parametric median slope'],
+                        ['95% Confidence Lower Bound', (sen.ciLower * divisor).toFixed(5), `${variable.unit}/year`, 'Robust lower bound'],
+                        ['95% Confidence Upper Bound', (sen.ciUpper * divisor).toFixed(5), `${variable.unit}/year`, 'Robust upper bound'],
+                        ['Total Observations', rawData.dates.length, 'Data Points', `${analysis.cleanData.cleanData.length} valid (${analysis.cleanData.missingPercent.toFixed(1)}% missing)`]
+                    ];
+
+                    statsRows.forEach((r, idx) => {
+                        const row = sheet1.getRow(nextRow);
+                        row.values = r;
+                        if (idx % 2 === 1) {
+                            ['A', 'B', 'C', 'D'].forEach(c => {
+                                sheet1.getCell(`${c}${nextRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F7FA' } };
+                            });
+                        }
+                        nextRow++;
+                    });
+
+                    sheet1.columns = [
+                        { width: 32 },
+                        { width: 22 },
+                        { width: 22 },
+                        { width: 38 }
+                    ];
+
+                    // --------------------------------------------------------
+                    // SHEET 2: Full Time Series Numbers
+                    // --------------------------------------------------------
+                    const sheet2 = workbook.addWorksheet('Time Series Data', {
+                        views: [{ showGridLines: true }]
+                    });
+
+                    sheet2.getRow(1).values = [
+                        'Date',
+                        `Observed ${variable.name} (${variable.unit})`,
+                        `12-Month Moving Average (${variable.unit})`,
+                        `Climatological Anomaly (${variable.unit})`,
+                        `Linear Trendline (${variable.unit})`
+                    ];
+                    sheet2.getRow(1).height = 28;
+                    sheet2.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                    ['A', 'B', 'C', 'D', 'E'].forEach(col => {
+                        sheet2.getCell(`${col}1`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3D91' } };
+                        sheet2.getCell(`${col}1`).alignment = { vertical: 'middle', horizontal: 'center' };
+                    });
+
+                    const validIdx = analysis.cleanData.validIndices;
+                    const ma = analysis.movingAverage;
+                    const anomalies = analysis.anomalies;
+
+                    for (let i = 0; i < rawData.dates.length; i++) {
+                        const dateStr = rawData.dates[i];
+                        const cleanIdx = validIdx.indexOf(i);
+                        const isValid = cleanIdx !== -1;
+                        const rawVal = isValid ? Number(rawData.values[i]) : null;
+                        const maVal = (isValid && ma && ma[cleanIdx] !== null && ma[cleanIdx] !== undefined) ? Number(ma[cleanIdx].toFixed(4)) : null;
+                        const anomVal = (isValid && anomalies && anomalies[cleanIdx] !== undefined && !isNaN(anomalies[cleanIdx])) ? Number(anomalies[cleanIdx].toFixed(4)) : null;
+                        const trendVal = Number((reg.slope * i + reg.intercept).toFixed(4));
+
+                        const row = sheet2.addRow([
+                            dateStr,
+                            rawVal !== null ? rawVal : '',
+                            maVal !== null ? maVal : '',
+                            anomVal !== null ? anomVal : '',
+                            trendVal
+                        ]);
+
+                        if (i % 2 === 1) {
+                            ['A', 'B', 'C', 'D', 'E'].forEach(c => {
+                                row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFC' } };
+                            });
+                        }
+                    }
+
+                    sheet2.columns = [
+                        { width: 16 },
+                        { width: 30 },
+                        { width: 28 },
+                        { width: 28 },
+                        { width: 25 }
+                    ];
+                }
 
                 const buffer = await workbook.xlsx.writeBuffer();
                 const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
-                const filename = `nasa_earth_detective_${variable.id}_${regionName.replace(/[^a-zA-Z0-9]/g, '_')}_${state.startYear}-${state.endYear}.xlsx`;
+                const fileTag = isMulti ? `multi_factors_${state.selectedVariables.length}` : variable.id;
+                const filename = `nasa_earth_detective_${fileTag}_${regionName.replace(/[^a-zA-Z0-9]/g, '_')}_${state.startYear}-${state.endYear}.xlsx`;
                 link.download = filename;
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
                 URL.revokeObjectURL(url);
 
-                showNotification('Complete Excel workbook (.xlsx) with chart & numbers exported!', 'success');
+                showNotification(`Complete Excel workbook (.xlsx) with embedded chart & all ${isMulti ? state.selectedVariables.length + ' factors' : 'data'} exported!`, 'success');
                 return;
             } catch (err) {
                 console.warn('ExcelJS error, falling back to formatted spreadsheet:', err);
