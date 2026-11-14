@@ -245,10 +245,15 @@
             <div class="selection-summary" id="selection-summary">
                 Select a variable and region to begin
             </div>
-            <button class="analyze-btn" id="analyze-btn" disabled>
-                <span class="btn-icon">🔬</span>
-                <span class="btn-text">Analyze Trend</span>
-            </button>
+            <div class="analyze-btn-wrapper">
+                <button class="analyze-btn ready" id="analyze-btn">
+                    <span class="btn-icon">🔬</span>
+                    <span class="btn-text">Analyze Trend</span>
+                </button>
+            </div>
+            <div class="analyze-features-badge">
+                <span>⚡ Powered by NASA POWER Satellite Data • Mann-Kendall Trend Test • Sen's Slope • 📊 Full Excel Export (.xlsx)</span>
+            </div>
         </section>
 
         <!-- ============================== -->
@@ -258,7 +263,11 @@
             <div class="section-header">
                 <h2>📊 Analysis Results</h2>
                 <div class="results-actions">
-                    <button class="action-btn btn-excel" id="export-excel-btn" title="Export full spreadsheet to Excel (.xlsx) with embedded chart and numbers">📊 Export Excel (.xlsx)</button>
+                    <button class="action-btn btn-excel btn-excel-large" id="export-excel-btn" title="Export full spreadsheet to Excel (.xlsx) with embedded chart and numbers">
+                        <span class="btn-icon">📊</span>
+                        <span>Export Excel (.xlsx)</span>
+                        <span class="badge-pill">Chart + Data</span>
+                    </button>
                     <button class="action-btn" id="export-chart-png-btn" title="Download High-Resolution Chart Image as PNG">🖼️ Save Chart (PNG)</button>
                     <button class="action-btn" id="export-btn" title="Export raw data as CSV">📥 Export CSV</button>
                 </div>
@@ -279,7 +288,12 @@
             <!-- Statistics -->
             <div class="results-grid">
                 <div class="stats-card">
-                    <h3>📐 Statistical Analysis</h3>
+                    <div class="card-header-with-action">
+                        <h3>📐 Statistical Analysis</h3>
+                        <button class="action-btn btn-excel-mini" id="stats-mini-excel-btn" title="Export spreadsheet to Excel (.xlsx)">
+                            📊 Export Excel
+                        </button>
+                    </div>
                     <div id="stats-container">
                         <!-- Filled by JS -->
                     </div>
