@@ -2842,6 +2842,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         <button class="history-restore-btn" data-id="${item.id}">
                             🔄 Restore Full Analysis & Chart
                         </button>
+                        <button class="history-excel-btn" data-id="${item.id}">
+                            📊 Excel (.xlsx)
+                        </button>
                         <button class="history-export-btn" data-id="${item.id}">
                             📥 Export CSV
                         </button>
@@ -2861,7 +2864,15 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
 
-        // Hook up Export buttons
+        // Hook up Excel buttons
+        container.querySelectorAll('.history-excel-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = btn.dataset.id;
+                exportHistoryItemExcel(id);
+            });
+        });
+
+        // Hook up Export CSV buttons
         container.querySelectorAll('.history-export-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const id = btn.dataset.id;
@@ -3021,7 +3032,19 @@ document.addEventListener('DOMContentLoaded', () => {
         // Chart tabs
         setupChartTabs();
 
-        // Export button
+        // Export to Excel button (.xlsx with embedded chart and numbers)
+        const exportExcelBtn = document.getElementById('export-excel-btn');
+        if (exportExcelBtn) {
+            exportExcelBtn.addEventListener('click', exportResultsExcel);
+        }
+
+        // Export Chart Image button (PNG)
+        const exportPngBtn = document.getElementById('export-chart-png-btn');
+        if (exportPngBtn) {
+            exportPngBtn.addEventListener('click', exportChartPNG);
+        }
+
+        // Export CSV button
         const exportBtn = document.getElementById('export-btn');
         if (exportBtn) {
             exportBtn.addEventListener('click', exportResults);
@@ -3044,8 +3067,381 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    // EXPORT FUNCTIONALITY
+    // EXPORT FUNCTIONALITY (Excel .xlsx with Chart, PNG, CSV)
     // ============================================================
+
+    async function exportResultsExcel() {
+        if (!state.currentAnalysis || !state.currentData || !state.selectedVariable) {
+            showNotification('No analysis results to export. Run an analysis first.', 'warning');
+            return;
+        }
+
+        const analysis = state.currentAnalysis;
+        const rawData = state.currentData;
+        const variable = state.selectedVariable;
+        const reg = analysis.regression;
+        const mk = analysis.mannKendall;
+        const sen = analysis.sensSlope;
+        const divisor = state.temporal === 'monthly' ? 12 : 365;
+
+        // Determine region name
+        let regionName = 'Selected Location';
+        const matchedPreset = PRESET_REGIONS.find(r =>
+            Math.abs(r.lat - state.selectedLat) < 1 && Math.abs(r.lon - state.selectedLon) < 1
+        );
+        if (matchedPreset) regionName = matchedPreset.name;
+        else if (state.searchResultName) regionName = state.searchResultName.split(',')[0];
+        else regionName = `${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'}`;
+
+        showNotification('Rendering chart image & assembling Excel workbook (.xlsx)...', 'info');
+
+        // 1. Capture High-Resolution Chart Image from Plotly
+        const chartEl = document.getElementById('chart');
+        let chartDataUrl = null;
+        if (chartEl && typeof Plotly !== 'undefined') {
+            try {
+                chartDataUrl = await Plotly.toImage(chartEl, {
+                    format: 'png',
+                    width: 1000,
+                    height: 500,
+                    scale: 2
+                });
+            } catch (err) {
+                console.warn('Plotly toImage warning:', err);
+            }
+        }
+
+        // 2. Generate Native Multi-Sheet .xlsx with ExcelJS
+        if (typeof ExcelJS !== 'undefined') {
+            try {
+                const workbook = new ExcelJS.Workbook();
+                workbook.creator = 'NASA-EARTH Detective Trend';
+                workbook.lastModifiedBy = 'NASA-EARTH Detective Trend';
+                workbook.created = new Date();
+                workbook.modified = new Date();
+
+                // --------------------------------------------------------
+                // SHEET 1: Summary & Embedded Chart
+                // --------------------------------------------------------
+                const sheet1 = workbook.addWorksheet('Summary & Chart', {
+                    views: [{ showGridLines: true }]
+                });
+
+                // Title Banner
+                sheet1.mergeCells('A1:J1');
+                const titleCell = sheet1.getCell('A1');
+                titleCell.value = '🛰️ NASA-EARTH Detective Trend — Climate & Meteorological Investigation Report';
+                titleCell.font = { name: 'Calibri', size: 15, bold: true, color: { argb: 'FFFFFFFF' } };
+                titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3D91' } };
+                titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+                sheet1.getRow(1).height = 36;
+
+                // Investigation Metadata
+                sheet1.getCell('A3').value = 'Investigation Variable:';
+                sheet1.getCell('B3').value = `${variable.name} (${variable.id})`;
+                sheet1.getCell('A3').font = { bold: true };
+                sheet1.getCell('B3').font = { bold: true, color: { argb: 'FF0B3D91' } };
+
+                sheet1.getCell('D3').value = 'Target Location:';
+                sheet1.getCell('E3').value = `${regionName} (Lat: ${state.selectedLat}, Lon: ${state.selectedLon})`;
+                sheet1.getCell('D3').font = { bold: true };
+
+                sheet1.getCell('A4').value = 'Measurement Unit:';
+                sheet1.getCell('B4').value = variable.unit;
+                sheet1.getCell('A4').font = { bold: true };
+
+                sheet1.getCell('D4').value = 'Analysis Period:';
+                sheet1.getCell('E4').value = `${state.startYear} – ${state.endYear} (${state.temporal})`;
+                sheet1.getCell('D4').font = { bold: true };
+
+                sheet1.getCell('A5').value = 'Data Source:';
+                sheet1.getCell('B5').value = 'NASA POWER (MERRA-2 & GLDAS Satellite/Reanalysis)';
+                sheet1.getCell('A5').font = { bold: true };
+
+                sheet1.getCell('D5').value = 'Report Timestamp:';
+                sheet1.getCell('E5').value = new Date().toLocaleString();
+                sheet1.getCell('D5').font = { bold: true };
+
+                let nextRow = 8;
+
+                // Embed the High-Res Chart Image directly into Sheet 1
+                if (chartDataUrl) {
+                    const base64Data = chartDataUrl.replace(/^data:image\/png;base64,/, '');
+                    const imageId = workbook.addImage({
+                        base64: base64Data,
+                        extension: 'png',
+                    });
+                    sheet1.addImage(imageId, {
+                        tl: { col: 0.5, row: 6.5 },
+                        br: { col: 9.5, row: 24.5 }
+                    });
+                    nextRow = 26;
+                }
+
+                // Section Header: Statistical Test Results
+                sheet1.mergeCells(`A${nextRow}:E${nextRow}`);
+                const statsHeader = sheet1.getCell(`A${nextRow}`);
+                statsHeader.value = '🔬 Statistical Hypothesis & Trend Verification';
+                statsHeader.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
+                statsHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565C0' } };
+                sheet1.getRow(nextRow).height = 26;
+                nextRow++;
+
+                // Table Header
+                sheet1.getRow(nextRow).values = ['Statistical Metric', 'Numerical Value', 'Measurement Unit', 'Significance / Interpretation'];
+                sheet1.getRow(nextRow).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                ['A', 'B', 'C', 'D'].forEach(col => {
+                    sheet1.getCell(`${col}${nextRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF263238' } };
+                    sheet1.getCell(`${col}${nextRow}`).alignment = { vertical: 'middle' };
+                });
+                sheet1.getRow(nextRow).height = 22;
+                nextRow++;
+
+                // Statistical Rows
+                const statsRows = [
+                    ['Linear Regression (OLS) Rate', (reg.slope * divisor).toFixed(5), `${variable.unit}/year`, `R² = ${(reg.rSquared * 100).toFixed(2)}%`],
+                    ['Linear Regression Intercept', reg.intercept.toFixed(4), variable.unit, 'Baseline fit value'],
+                    ['Regression p-value (t-test)', reg.pValue < 0.001 ? '< 0.001' : reg.pValue.toFixed(6), 'p-value', reg.pValue < 0.05 ? 'Statistically Significant (p < 0.05)' : 'Not Significant'],
+                    ['Mann-Kendall Trend Direction', mk.trend, 'Direction', mk.significant ? 'Significant Monotonic Trend' : 'No Significant Trend'],
+                    ['Mann-Kendall Tau (τ)', mk.tau.toFixed(4), 'Rank Correlation', `S = ${mk.S}, Var(S) = ${mk.varS ? mk.varS.toFixed(1) : 'N/A'}`],
+                    ['Mann-Kendall p-value', mk.pValue < 0.001 ? '< 0.001' : mk.pValue.toFixed(6), 'p-value', mk.significant ? 'p < 0.05 (Confirms Trend)' : 'p ≥ 0.05'],
+                    ["Sen's Slope Estimator", (sen.slope * divisor).toFixed(5), `${variable.unit}/year`, 'Non-parametric median slope'],
+                    ['95% Confidence Lower Bound', (sen.ciLower * divisor).toFixed(5), `${variable.unit}/year`, 'Robust lower bound'],
+                    ['95% Confidence Upper Bound', (sen.ciUpper * divisor).toFixed(5), `${variable.unit}/year`, 'Robust upper bound'],
+                    ['Total Observations', rawData.dates.length, 'Data Points', `${analysis.cleanData.cleanData.length} valid (${analysis.cleanData.missingPercent.toFixed(1)}% missing)`]
+                ];
+
+                statsRows.forEach((r, idx) => {
+                    const row = sheet1.getRow(nextRow);
+                    row.values = r;
+                    if (idx % 2 === 1) {
+                        ['A', 'B', 'C', 'D'].forEach(c => {
+                            sheet1.getCell(`${c}${nextRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F7FA' } };
+                        });
+                    }
+                    nextRow++;
+                });
+
+                sheet1.columns = [
+                    { width: 32 },
+                    { width: 22 },
+                    { width: 22 },
+                    { width: 38 }
+                ];
+
+                // --------------------------------------------------------
+                // SHEET 2: Full Time Series Numbers
+                // --------------------------------------------------------
+                const sheet2 = workbook.addWorksheet('Time Series Data', {
+                    views: [{ showGridLines: true }]
+                });
+
+                sheet2.getRow(1).values = [
+                    'Date',
+                    `Observed ${variable.name} (${variable.unit})`,
+                    `12-Month Moving Average (${variable.unit})`,
+                    `Climatological Anomaly (${variable.unit})`,
+                    `Linear Trendline (${variable.unit})`
+                ];
+                sheet2.getRow(1).height = 28;
+                sheet2.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                ['A', 'B', 'C', 'D', 'E'].forEach(col => {
+                    sheet2.getCell(`${col}1`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3D91' } };
+                    sheet2.getCell(`${col}1`).alignment = { vertical: 'middle', horizontal: 'center' };
+                });
+
+                const validIdx = analysis.cleanData.validIndices;
+                const ma = analysis.movingAverage;
+                const anomalies = analysis.anomalies;
+
+                for (let i = 0; i < rawData.dates.length; i++) {
+                    const dateStr = rawData.dates[i];
+                    const cleanIdx = validIdx.indexOf(i);
+                    const isValid = cleanIdx !== -1;
+                    const rawVal = isValid ? Number(rawData.values[i]) : null;
+                    const maVal = (isValid && ma && ma[cleanIdx] !== null && ma[cleanIdx] !== undefined) ? Number(ma[cleanIdx].toFixed(4)) : null;
+                    const anomVal = (isValid && anomalies && anomalies[cleanIdx] !== undefined && !isNaN(anomalies[cleanIdx])) ? Number(anomalies[cleanIdx].toFixed(4)) : null;
+                    const trendVal = Number((reg.slope * i + reg.intercept).toFixed(4));
+
+                    const row = sheet2.addRow([
+                        dateStr,
+                        rawVal !== null ? rawVal : '',
+                        maVal !== null ? maVal : '',
+                        anomVal !== null ? anomVal : '',
+                        trendVal
+                    ]);
+
+                    if (i % 2 === 1) {
+                        ['A', 'B', 'C', 'D', 'E'].forEach(c => {
+                            row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFC' } };
+                        });
+                    }
+                }
+
+                sheet2.columns = [
+                    { width: 16 },
+                    { width: 30 },
+                    { width: 28 },
+                    { width: 28 },
+                    { width: 25 }
+                ];
+
+                const buffer = await workbook.xlsx.writeBuffer();
+                const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                const filename = `nasa_earth_detective_${variable.id}_${regionName.replace(/[^a-zA-Z0-9]/g, '_')}_${state.startYear}-${state.endYear}.xlsx`;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+
+                showNotification('Complete Excel workbook (.xlsx) with chart & numbers exported!', 'success');
+                return;
+            } catch (err) {
+                console.warn('ExcelJS error, falling back to formatted spreadsheet:', err);
+            }
+        }
+
+        // Fallback: Formatted HTML Excel Spreadsheet (.xls) with embedded base64 chart image
+        exportHtmlSpreadsheetFallback(analysis, rawData, variable, regionName, divisor, reg, mk, sen, chartDataUrl);
+    }
+
+    function exportHtmlSpreadsheetFallback(analysis, rawData, variable, regionName, divisor, reg, mk, sen, chartDataUrl) {
+        const validIdx = analysis.cleanData.validIndices;
+        const ma = analysis.movingAverage;
+        const anomalies = analysis.anomalies;
+
+        let tableRows = '';
+        for (let i = 0; i < rawData.dates.length; i++) {
+            const dateStr = rawData.dates[i];
+            const cleanIdx = validIdx.indexOf(i);
+            const isValid = cleanIdx !== -1;
+            const val = isValid ? Number(rawData.values[i]).toFixed(4) : '';
+            const maVal = (isValid && ma && ma[cleanIdx] !== null && ma[cleanIdx] !== undefined) ? Number(ma[cleanIdx]).toFixed(4) : '';
+            const anom = (isValid && anomalies && anomalies[cleanIdx] !== undefined && !isNaN(anomalies[cleanIdx])) ? Number(anomalies[cleanIdx]).toFixed(4) : '';
+            const trend = (reg.slope * i + reg.intercept).toFixed(4);
+
+            tableRows += `<tr><td>${dateStr}</td><td>${val}</td><td>${maVal}</td><td>${anom}</td><td>${trend}</td></tr>`;
+        }
+
+        const chartImgTag = chartDataUrl ? `<div style="text-align:center;margin:20px 0;"><img src="${chartDataUrl}" width="800" style="max-width:100%;border:1px solid #ccc;border-radius:8px;"></div>` : '';
+
+        const html = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+            <head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>NASA Trend Analysis</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
+            <body style="font-family:Arial,sans-serif;padding:20px;">
+                <h1 style="color:#0B3D91;margin-bottom:4px;">NASA-EARTH Detective Trend — Climate Report</h1>
+                <p><strong>Variable:</strong> ${variable.name} (${variable.id}) | <strong>Location:</strong> ${regionName} (${state.selectedLat}, ${state.selectedLon}) | <strong>Period:</strong> ${state.startYear} – ${state.endYear} (${state.temporal})</p>
+                ${chartImgTag}
+                <h2 style="color:#1565C0;">Statistical Summary</h2>
+                <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;margin-bottom:24px;">
+                    <tr style="background:#0B3D91;color:#fff;"><th>Metric</th><th>Value</th><th>Unit</th><th>Interpretation</th></tr>
+                    <tr><td>Linear Regression Rate</td><td>${(reg.slope * divisor).toFixed(5)}</td><td>${variable.unit}/year</td><td>R² = ${(reg.rSquared * 100).toFixed(2)}%</td></tr>
+                    <tr><td>Mann-Kendall Trend</td><td>${mk.trend}</td><td>Direction</td><td>${mk.significant ? 'Significant' : 'Not Significant'} (p = ${mk.pValue})</td></tr>
+                    <tr><td>Sen's Slope Estimator</td><td>${(sen.slope * divisor).toFixed(5)}</td><td>${variable.unit}/year</td><td>Median Slope</td></tr>
+                </table>
+                <h2 style="color:#1565C0;">Data Records</h2>
+                <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
+                    <tr style="background:#263238;color:#fff;"><th>Date</th><th>Observed Value (${variable.unit})</th><th>12-Mo Moving Avg</th><th>Anomaly</th><th>Linear Trend</th></tr>
+                    ${tableRows}
+                </table>
+            </body>
+            </html>
+        `;
+
+        const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `nasa_earth_detective_${variable.id}_${regionName.replace(/[^a-zA-Z0-9]/g, '_')}_${state.startYear}-${state.endYear}.xls`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showNotification('Spreadsheet with chart and numbers exported (.xls)!', 'success');
+    }
+
+    async function exportChartPNG() {
+        if (!state.currentAnalysis || !state.currentData || !state.selectedVariable) {
+            showNotification('No chart to export. Run an analysis first.', 'warning');
+            return;
+        }
+
+        const chartEl = document.getElementById('chart');
+        if (!chartEl || typeof Plotly === 'undefined') {
+            showNotification('Chart element not found.', 'warning');
+            return;
+        }
+
+        showNotification('Rendering high-resolution chart image (PNG)...', 'info');
+
+        try {
+            const dataUrl = await Plotly.toImage(chartEl, {
+                format: 'png',
+                width: 1400,
+                height: 700,
+                scale: 2
+            });
+
+            const variable = state.selectedVariable;
+            let regionName = state.selectedPreset ? state.selectedPreset.name : 'location';
+
+            const link = document.createElement('a');
+            link.href = dataUrl;
+            link.download = `nasa_chart_${variable.id}_${regionName.replace(/[^a-zA-Z0-9]/g, '_')}_${state.startYear}-${state.endYear}.png`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            showNotification('Chart image successfully saved as PNG!', 'success');
+        } catch (err) {
+            console.error('Error generating chart image:', err);
+            showNotification('Failed to generate chart image.', 'error');
+        }
+    }
+
+    async function exportHistoryItemExcel(id) {
+        const list = getHistory();
+        const item = list.find(h => h.id === id);
+        if (!item || !item.rawData || !item.analysis) {
+            showNotification('Could not export this item.', 'warning');
+            return;
+        }
+        const oldAnalysis = state.currentAnalysis;
+        const oldData = state.currentData;
+        const oldVar = state.selectedVariable;
+        const oldPreset = state.selectedPreset;
+        const oldLat = state.selectedLat;
+        const oldLon = state.selectedLon;
+        const oldStart = state.startYear;
+        const oldEnd = state.endYear;
+        const oldTemporal = state.temporal;
+
+        state.currentAnalysis = item.analysis;
+        state.currentData = item.rawData;
+        state.selectedVariable = item.variable;
+        state.selectedPreset = { name: item.region.name };
+        state.selectedLat = item.region.lat;
+        state.selectedLon = item.region.lon;
+        state.startYear = item.time.startYear;
+        state.endYear = item.time.endYear;
+        state.temporal = item.time.temporal;
+
+        await exportResultsExcel();
+
+        state.currentAnalysis = oldAnalysis;
+        state.currentData = oldData;
+        state.selectedVariable = oldVar;
+        state.selectedPreset = oldPreset;
+        state.selectedLat = oldLat;
+        state.selectedLon = oldLon;
+        state.startYear = oldStart;
+        state.endYear = oldEnd;
+        state.temporal = oldTemporal;
+    }
 
     function exportResults() {
         if (!state.currentAnalysis || !state.currentData) {

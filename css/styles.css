@@ -1084,6 +1084,24 @@ h1, h2, h3, h4 {
     color: var(--primary);
 }
 
+.btn-excel {
+    background: linear-gradient(135deg, #107c41, #1e7145) !important;
+    border-color: #0e6b37 !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 8px rgba(16, 124, 65, 0.25);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.btn-excel:hover {
+    background: linear-gradient(135deg, #1e7145, #238952) !important;
+    border-color: #107c41 !important;
+    color: #ffffff !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(16, 124, 65, 0.35);
+}
+
 /* Chart Tabs */
 .chart-tabs {
     display: flex;

@@ -258,7 +258,9 @@
             <div class="section-header">
                 <h2>📊 Analysis Results</h2>
                 <div class="results-actions">
-                    <button class="action-btn" id="export-btn" title="Export as CSV">📥 Export CSV</button>
+                    <button class="action-btn btn-excel" id="export-excel-btn" title="Export full spreadsheet to Excel (.xlsx) with embedded chart and numbers">📊 Export Excel (.xlsx)</button>
+                    <button class="action-btn" id="export-chart-png-btn" title="Download High-Resolution Chart Image as PNG">🖼️ Save Chart (PNG)</button>
+                    <button class="action-btn" id="export-btn" title="Export raw data as CSV">📥 Export CSV</button>
                 </div>
             </div>
 
@@ -636,6 +638,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <!-- Plotly JS -->
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <!-- ExcelJS for Spreadsheet Export with Embedded Charts & Multi-Sheet Workbooks -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
     <!-- Three.js & OrbitControls for 3D Earth Globe & 360 View -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
