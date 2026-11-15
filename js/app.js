@@ -470,7 +470,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="marker-popup-content">
                 <div class="marker-popup-title">${locName}</div>
                 <div class="marker-popup-coords">${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'}</div>
-                <button class="popup-3d-btn" onclick="document.getElementById('open-3d-btn').click()">🌐 3D & 360° View</button>
+                <div class="popup-btn-group">
+                    <button class="popup-tool-btn popup-streetview-btn" onclick="window.openStreetViewModeDirect()">📷 360° View</button>
+                    <button class="popup-tool-btn popup-globe-btn" onclick="window.openOrbitGlobeModeDirect()">🌐 3D Globe</button>
+                </div>
             </div>
         `;
 
@@ -497,7 +500,9 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('selected-location').textContent =
             `${locName} (${Math.abs(state.selectedLat).toFixed(2)}°${state.selectedLat >= 0 ? 'N' : 'S'}, ${Math.abs(state.selectedLon).toFixed(2)}°${state.selectedLon >= 0 ? 'E' : 'W'})`;
 
-        // Enable 3D & 360 view button
+        // Enable 3D & 360 view buttons
+        const openStreetviewBtn = document.getElementById('open-streetview-btn');
+        if (openStreetviewBtn) openStreetviewBtn.disabled = false;
         const open3dBtn = document.getElementById('open-3d-btn');
         if (open3dBtn) open3dBtn.disabled = false;
 
@@ -647,10 +652,158 @@ document.addEventListener('DOMContentLoaded', () => {
     // 3D GLOBE & 360° INSIDE PLACE VIEW (Three.js Engine)
     // ============================================================
 
+    // Curated real-world Google Street View Treks & Photospheres Catalog
+    const CURATED_STREETVIEW_TREKS = [
+        {
+            id: 'svalbard',
+            name: 'Svalbard Arctic Tundra (Norway)',
+            badge: '❄️ Svalbard Arctic',
+            lat: 78.2232,
+            lon: 15.6267,
+            desc: 'Glacial fjords, permafrost, and northernmost town of Longyearbyen in Svalbard, Norway.',
+            embedQuery: 'Longyearbyen,Svalbard',
+            streetViewUrl: 'https://www.google.com/maps/search/Longyearbyen+Svalbard/@78.2232,15.6267,14z',
+            mapillaryUrl: 'https://www.mapillary.com/app/?lat=78.2232&lng=15.6267&z=14',
+            earthUrl: 'https://earth.google.com/web/@78.2232,15.6267,250a,35d,35y,0h,45t,0r'
+        },
+        {
+            id: 'greenland',
+            name: 'Ilulissat Icefjord (Greenland)',
+            badge: '🧊 Greenland Icefjord',
+            lat: 69.2167,
+            lon: -51.1000,
+            desc: 'UNESCO World Heritage icefjord with massive calving glaciers and sea icebergs.',
+            embedQuery: 'Ilulissat+Icefjord,Greenland',
+            streetViewUrl: 'https://www.google.com/maps/search/Ilulissat+Icefjord+Greenland/@69.2167,-51.1,13z',
+            mapillaryUrl: 'https://www.mapillary.com/app/?lat=69.2167&lng=-51.1&z=13',
+            earthUrl: 'https://earth.google.com/web/@69.2167,-51.1000,1000a,35d,35y,0h,60t,0r'
+        },
+        {
+            id: 'amazon',
+            name: 'Rio Negro & Amazon Rainforest (Brazil)',
+            badge: '🛶 Amazon River Trek',
+            lat: -3.1190,
+            lon: -60.0217,
+            desc: 'Google Street View Trek along the Rio Negro riverways and dense Amazonian rainforest canopy.',
+            embedQuery: 'Rio+Negro,Amazonas,Brazil',
+            streetViewUrl: 'https://www.google.com/maps/search/Rio+Negro+Amazonas+Brazil/@-3.119,-60.021,12z',
+            mapillaryUrl: 'https://www.mapillary.com/app/?lat=-3.119&lng=-60.021&z=12',
+            earthUrl: 'https://earth.google.com/web/@-3.1190,-60.0217,800a,35d,35y,0h,55t,0r'
+        },
+        {
+            id: 'sahara',
+            name: 'Erg Chebbi Dunes, Sahara Desert (Morocco)',
+            badge: '🐪 Sahara Desert Dunes',
+            lat: 31.1498,
+            lon: -3.9686,
+            desc: 'High sweeping sand dunes and camel trek photospheres at Erg Chebbi in Merzouga.',
+            embedQuery: 'Erg+Chebbi,Merzouga,Morocco',
+            streetViewUrl: 'https://www.google.com/maps/search/Erg+Chebbi+Merzouga+Morocco/@31.1498,-3.9686,13z',
+            mapillaryUrl: 'https://www.mapillary.com/app/?lat=31.1498&lng=-3.9686&z=13',
+            earthUrl: 'https://earth.google.com/web/@31.1498,-3.9686,1200a,35d,35y,0h,60t,0r'
+        },
+        {
+            id: 'himalayas',
+            name: 'Everest Base Camp (Nepal)',
+            badge: '🏔️ Everest Base Camp',
+            lat: 28.0044,
+            lon: 86.8528,
+            desc: 'Khumbu Glacier trail and towering peaks of Mount Everest Himalayan Street View Trek.',
+            embedQuery: 'Everest+Base+Camp,Nepal',
+            streetViewUrl: 'https://www.google.com/maps/search/Everest+Base+Camp+Nepal/@28.0044,86.8528,14z',
+            mapillaryUrl: 'https://www.mapillary.com/app/?lat=28.0044&lng=86.8528&z=14',
+            earthUrl: 'https://earth.google.com/web/@28.0044,86.8528,3000a,35d,35y,0h,65t,0r'
+        },
+        {
+            id: 'antarctica',
+            name: 'Ross Island Penguin Colony (Antarctica)',
+            badge: '🐧 Antarctica Colony',
+            lat: -77.5333,
+            lon: 167.1500,
+            desc: 'Adélie penguin colonies, polar ice sheets, and historic Antarctic expedition huts.',
+            embedQuery: 'Ross+Island,Antarctica',
+            streetViewUrl: 'https://www.google.com/maps/search/Ross+Island+Antarctica/@-77.5333,167.15,12z',
+            mapillaryUrl: 'https://www.mapillary.com/app/?lat=-77.5333&lng=167.15&z=12',
+            earthUrl: 'https://earth.google.com/web/@-77.5333,167.1500,3500a,35d,35y,0h,60t,0r'
+        },
+        {
+            id: 'hawaii',
+            name: 'Kilauea Volcano & Coral Reef (Hawaii)',
+            badge: '🌋 Hawaii Volcano & Reef',
+            lat: 19.4069,
+            lon: -155.2834,
+            desc: 'Volcanic calderas and pristine underwater coral reef photospheres in the Pacific.',
+            embedQuery: 'Kilauea+Volcano,Hawaii',
+            streetViewUrl: 'https://www.google.com/maps/search/Kilauea+Volcano+Hawaii/@19.4069,-155.2834,13z',
+            mapillaryUrl: 'https://www.mapillary.com/app/?lat=19.4069&lng=-155.2834&z=13',
+            earthUrl: 'https://earth.google.com/web/@19.4069,-155.2834,1500a,35d,35y,0h,55t,0r'
+        },
+        {
+            id: 'tokyo',
+            name: 'Shibuya, Tokyo (Urban Climate)',
+            badge: '🏙️ Tokyo Urban Center',
+            lat: 35.6595,
+            lon: 139.7005,
+            desc: 'High-density urban heat island with dense 360° street view and building topography.',
+            embedQuery: 'Shibuya+Crossing,Tokyo,Japan',
+            streetViewUrl: 'https://www.google.com/maps/search/Shibuya+Crossing+Tokyo/@35.6595,139.7005,17z',
+            mapillaryUrl: 'https://www.mapillary.com/app/?lat=35.6595&lng=139.7005&z=17',
+            earthUrl: 'https://earth.google.com/web/@35.6595,139.7005,500a,35d,35y,0h,60t,0r'
+        }
+    ];
+
+    function getStreetViewUrls(lat, lon, locName) {
+        if (lat === null || lat === undefined || lon === null || lon === undefined) {
+            lat = 78.2232;
+            lon = 15.6267;
+            locName = 'Svalbard (Arctic)';
+        }
+
+        // Check if close to a curated trek (within ~2.5 degrees / ~250km)
+        let closestTrek = null;
+        let minDistance = Infinity;
+
+        for (const trek of CURATED_STREETVIEW_TREKS) {
+            const dLat = trek.lat - lat;
+            const dLon = trek.lon - lon;
+            const dist = Math.sqrt(dLat * dLat + dLon * dLon);
+            if (dist < minDistance) {
+                minDistance = dist;
+                closestTrek = trek;
+            }
+        }
+
+        if (minDistance < 2.5 && closestTrek) {
+            return {
+                title: closestTrek.name,
+                desc: closestTrek.desc,
+                embedUrl: `https://maps.google.com/maps?q=${closestTrek.embedQuery}&t=k&z=14&output=embed`,
+                streetViewUrl: closestTrek.streetViewUrl,
+                mapillaryUrl: closestTrek.mapillaryUrl,
+                earthUrl: closestTrek.earthUrl,
+                trekId: closestTrek.id
+            };
+        }
+
+        const query = (locName && locName !== 'Selected Region' && !locName.includes('°'))
+            ? `${locName}`
+            : `${lat.toFixed(4)},${lon.toFixed(4)}`;
+
+        return {
+            title: `${locName || 'Selected Location'} (${Math.abs(lat).toFixed(2)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(2)}°${lon >= 0 ? 'E' : 'W'})`,
+            desc: `Interactive 360° satellite & street-level view at ${lat.toFixed(3)}°, ${lon.toFixed(3)}°. Pan, zoom, or click iconic world treks below!`,
+            embedUrl: `https://maps.google.com/maps?q=${encodeURIComponent(query)}&t=k&z=14&output=embed`,
+            streetViewUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`,
+            mapillaryUrl: `https://www.mapillary.com/app/?lat=${lat}&lng=${lon}&z=14`,
+            earthUrl: `https://earth.google.com/web/@${lat},${lon},1500a,35d,35y,0h,60t,0r`,
+            trekId: null
+        };
+    }
+
     let globeScene = null, globeCamera = null, globeRenderer = null, globeControls = null;
     let earthMesh = null, atmosMesh = null, pinMesh = null, starField = null;
     let panoMesh = null, panoMaterial = null;
-    let currentViewMode = 'orbit'; // 'orbit' or 'inside'
+    let currentViewMode = 'streetview'; // 'streetview', 'orbit', or 'inside'
     let currentBiome = 'polar';
     let isGlobeAutoRotate = true;
     let globeAnimId = null;
@@ -1318,23 +1471,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function init3DGlobe() {
         const openBtn = document.getElementById('open-3d-btn');
+        const openStreetviewBtn = document.getElementById('open-streetview-btn');
         const modal = document.getElementById('globe-modal');
         const closeBtn = document.getElementById('globe-modal-close');
         const rotateBtn = document.getElementById('globe-rotate-btn');
         const focusBtn = document.getElementById('globe-focus-btn');
         const resetBtn = document.getElementById('globe-reset-btn');
         const zoomSurfaceBtn = document.getElementById('globe-zoom-surface-btn');
+        const modeStreetviewBtn = document.getElementById('mode-streetview-btn');
         const modeOrbitBtn = document.getElementById('mode-orbit-btn');
         const modeInsideBtn = document.getElementById('mode-inside-btn');
         const modeToggleActionBtn = document.getElementById('mode-toggle-action-btn');
         const diveEnterBtn = document.getElementById('dive-enter-inside-btn');
         const earthLink = document.getElementById('google-earth-link');
         const streetviewLink = document.getElementById('google-streetview-link');
+        const mapillaryLink = document.getElementById('mapillary-streetview-link');
         const biomeSelector = document.getElementById('inside-biome-selector');
 
-        if (!openBtn || !modal) return;
+        if (!modal) return;
 
-        openBtn.addEventListener('click', open3DGlobeModal);
+        openStreetviewBtn?.addEventListener('click', () => open3DGlobeModal('streetview'));
+        openBtn?.addEventListener('click', () => open3DGlobeModal('orbit'));
 
         closeBtn?.addEventListener('click', close3DGlobeModal);
         modal.addEventListener('click', (e) => {
@@ -1342,10 +1499,17 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         // Mode switching buttons
+        modeStreetviewBtn?.addEventListener('click', () => switchViewMode('streetview'));
         modeOrbitBtn?.addEventListener('click', () => switchViewMode('orbit'));
         modeInsideBtn?.addEventListener('click', () => switchViewMode('inside'));
         modeToggleActionBtn?.addEventListener('click', () => {
-            switchViewMode(currentViewMode === 'orbit' ? 'inside' : 'orbit');
+            if (currentViewMode === 'streetview') {
+                switchViewMode('orbit');
+            } else if (currentViewMode === 'orbit') {
+                switchViewMode('inside');
+            } else {
+                switchViewMode('streetview');
+            }
         });
         diveEnterBtn?.addEventListener('click', () => switchViewMode('inside'));
 
@@ -1405,28 +1569,73 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        // Global functions for marker popups and direct external clicks
+        window.openStreetViewModeDirect = function() {
+            open3DGlobeModal('streetview');
+        };
+        window.openOrbitGlobeModeDirect = function() {
+            open3DGlobeModal('orbit');
+        };
+
         function switchViewMode(mode) {
             currentViewMode = mode;
+            const streetviewTab = document.getElementById('mode-streetview-btn');
             const orbitTab = document.getElementById('mode-orbit-btn');
             const insideTab = document.getElementById('mode-inside-btn');
             const toggleBtn = document.getElementById('mode-toggle-action-btn');
             const divePrompt = document.getElementById('globe-dive-prompt');
             const insideHud = document.getElementById('inside-place-hud');
+            const streetviewPanel = document.getElementById('streetview-viewer-panel');
             const hintText = document.getElementById('globe-hint-text');
 
-            if (mode === 'inside') {
+            if (mode === 'streetview') {
+                streetviewTab?.classList.add('active');
+                orbitTab?.classList.remove('active');
+                insideTab?.classList.remove('active');
+
+                if (streetviewPanel) streetviewPanel.style.display = 'flex';
+                if (divePrompt) divePrompt.style.display = 'none';
+                if (insideHud) insideHud.style.display = 'none';
+
+                if (toggleBtn) {
+                    toggleBtn.innerHTML = '🌍 Switch to 3D Orbit';
+                    toggleBtn.classList.remove('active');
+                }
+
+                if (hintText) {
+                    hintText.innerHTML = '💡 <strong>Interactive 360° Street View & Explorer:</strong> Pan and zoom satellite imagery and street viewpoints directly, or click 360° World Treks to jump to iconic panoramic vantage points!';
+                }
+
+                // Hide 3D objects
+                if (earthMesh) earthMesh.visible = false;
+                if (atmosMesh) atmosMesh.visible = false;
+                if (pinMesh) pinMesh.visible = false;
+                if (starField) starField.visible = false;
+                if (panoMesh) panoMesh.visible = false;
+                if (globeControls) globeControls.enabled = false;
+
+                const locName = getRegionDisplayName(state.selectedLat, state.selectedLon);
+                updateStreetViewViewer(state.selectedLat, state.selectedLon, locName);
+
+            } else if (mode === 'inside') {
+                streetviewTab?.classList.remove('active');
                 orbitTab?.classList.remove('active');
                 insideTab?.classList.add('active');
+
+                if (streetviewPanel) streetviewPanel.style.display = 'none';
+                if (divePrompt) divePrompt.style.display = 'none';
+                if (insideHud) insideHud.style.display = 'flex';
+
                 if (toggleBtn) {
                     toggleBtn.innerHTML = '🌍 Return to Orbit Globe';
                     toggleBtn.classList.add('active');
                 }
-                if (divePrompt) divePrompt.style.display = 'none';
-                if (insideHud) insideHud.style.display = 'flex';
 
                 if (hintText) {
                     hintText.innerHTML = '💡 <strong>360° Inside Navigation:</strong> Drag anywhere with mouse or touch to look around 360° in all directions. Scroll or pinch to zoom FOV. Click biomes above to change environment!';
                 }
+
+                setupThreeJSGlobe();
 
                 // Hide Orbit objects
                 if (earthMesh) earthMesh.visible = false;
@@ -1462,17 +1671,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
             } else {
                 // Orbit mode
+                streetviewTab?.classList.remove('active');
                 insideTab?.classList.remove('active');
                 orbitTab?.classList.add('active');
-                if (toggleBtn) {
-                    toggleBtn.innerHTML = '🏙️ Switch to 360° Inside';
-                    toggleBtn.classList.remove('active');
-                }
+
+                if (streetviewPanel) streetviewPanel.style.display = 'none';
                 if (insideHud) insideHud.style.display = 'none';
 
-                if (hintText) {
-                    hintText.innerHTML = '💡 <strong>Unrestricted 360° Orbit Navigation:</strong> Drag to spin globe 360°. Scroll or pinch to zoom all the way down to the surface, or click "360° Inside Place" to stand inside!';
+                if (toggleBtn) {
+                    toggleBtn.innerHTML = '🏙️ Switch to 360° Biome';
+                    toggleBtn.classList.remove('active');
                 }
+
+                if (hintText) {
+                    hintText.innerHTML = '💡 <strong>Unrestricted 360° Orbit Navigation:</strong> Drag to spin globe 360°. Scroll or pinch to zoom all the way down to the surface, or click "360° Street View" or "360° Biome Horizon" to step onto the land!';
+                }
+
+                setupThreeJSGlobe();
 
                 // Show Orbit objects
                 if (earthMesh) earthMesh.visible = true;
@@ -1490,11 +1705,81 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 if (globeControls) {
                     globeControls.enabled = true;
-                    // UNRESTRICTED ZOOM: allows zooming right down to surface height!
                     globeControls.minDistance = 80.5;
                     globeControls.maxDistance = 500;
                 }
+                updateGlobePin();
                 focusOnSelectedPin();
+            }
+        }
+
+        function updateStreetViewViewer(lat, lon, locName, trekOverride) {
+            const urls = trekOverride || getStreetViewUrls(lat, lon, locName);
+
+            const titleEl = document.getElementById('streetview-badge-title');
+            const descEl = document.getElementById('streetview-desc');
+            const iframe = document.getElementById('streetview-iframe');
+            const overlay = document.getElementById('streetview-loading-overlay');
+            const quickTreksEl = document.getElementById('streetview-quick-treks');
+            const streetviewLink = document.getElementById('google-streetview-link');
+            const earthLink = document.getElementById('google-earth-link');
+            const mapillaryLink = document.getElementById('mapillary-streetview-link');
+
+            if (titleEl) titleEl.textContent = urls.title || '360° Street View & Satellite Explorer';
+            if (descEl) descEl.textContent = urls.desc || 'Explore real-world 360° imagery, street views, and high-resolution satellite perspective.';
+
+            if (streetviewLink) streetviewLink.href = urls.streetViewUrl;
+            if (earthLink) earthLink.href = urls.earthUrl;
+            if (mapillaryLink) mapillaryLink.href = urls.mapillaryUrl;
+
+            if (iframe && urls.embedUrl) {
+                if (iframe.src !== urls.embedUrl) {
+                    if (overlay) overlay.style.display = 'flex';
+                    iframe.onload = () => {
+                        if (overlay) overlay.style.display = 'none';
+                    };
+                    setTimeout(() => {
+                        if (overlay) overlay.style.display = 'none';
+                    }, 800);
+                    iframe.src = urls.embedUrl;
+                }
+            }
+
+            // Build Quick Trek Pills
+            if (quickTreksEl) {
+                quickTreksEl.innerHTML = '';
+
+                // Selected Pin pill
+                const isCustomSelected = !urls.trekId;
+                const myPinBtn = document.createElement('button');
+                myPinBtn.className = `streetview-trek-pill ${isCustomSelected ? 'active' : ''}`;
+                myPinBtn.textContent = '📍 My Selected Pin';
+                myPinBtn.title = 'Explore Street & Satellite view for your selected map coordinate';
+                myPinBtn.addEventListener('click', () => {
+                    updateStreetViewViewer(state.selectedLat, state.selectedLon, getRegionDisplayName(state.selectedLat, state.selectedLon));
+                });
+                quickTreksEl.appendChild(myPinBtn);
+
+                // Curated trek pills
+                CURATED_STREETVIEW_TREKS.forEach(trek => {
+                    const btn = document.createElement('button');
+                    const isActive = urls.trekId === trek.id;
+                    btn.className = `streetview-trek-pill ${isActive ? 'active' : ''}`;
+                    btn.textContent = trek.badge;
+                    btn.title = `${trek.name}: ${trek.desc}`;
+                    btn.addEventListener('click', () => {
+                        updateStreetViewViewer(trek.lat, trek.lon, trek.name, {
+                            title: trek.name,
+                            desc: trek.desc,
+                            embedUrl: `https://maps.google.com/maps?q=${trek.embedQuery}&t=k&z=14&output=embed`,
+                            streetViewUrl: trek.streetViewUrl,
+                            mapillaryUrl: trek.mapillaryUrl,
+                            earthUrl: trek.earthUrl,
+                            trekId: trek.id
+                        });
+                    });
+                    quickTreksEl.appendChild(btn);
+                });
             }
         }
 
@@ -1560,11 +1845,13 @@ document.addEventListener('DOMContentLoaded', () => {
             stepZoom();
         }
 
-        function open3DGlobeModal() {
+        function open3DGlobeModal(initialMode) {
+            // Default to Svalbard if not yet selected
             if (state.selectedLat === null || state.selectedLon === null) {
-                showNotification('Please select a region on the map first.', 'warning');
-                return;
+                setLocation(78.22, 15.65);
             }
+
+            const mode = (typeof initialMode === 'string' && initialMode) ? initialMode : 'streetview';
 
             modal.style.display = 'flex';
             const locName = getRegionDisplayName(state.selectedLat, state.selectedLon);
@@ -1575,20 +1862,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 sub.textContent = `${locName} (${latStr}, ${lonStr})`;
             }
 
-            // Real-world external 3D & 360 links
-            if (earthLink) {
-                earthLink.href = `https://earth.google.com/web/@${state.selectedLat},${state.selectedLon},1500a,35d,35y,0h,60t,0r`;
-            }
-            if (streetviewLink) {
-                streetviewLink.href = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${state.selectedLat},${state.selectedLon}`;
-            }
+            // Real-world external 3D & 360 links fallback
+            const urls = getStreetViewUrls(state.selectedLat, state.selectedLon, locName);
+            if (earthLink) earthLink.href = urls.earthUrl;
+            if (streetviewLink) streetviewLink.href = urls.streetViewUrl;
+            if (mapillaryLink) mapillaryLink.href = urls.mapillaryUrl;
 
-            setTimeout(() => {
-                setupThreeJSGlobe();
-                switchViewMode('orbit');
-                updateGlobePin();
-                focusOnSelectedPin();
-            }, 60);
+            switchViewMode(mode);
+
+            if (mode === 'orbit' || mode === 'inside') {
+                setTimeout(() => {
+                    setupThreeJSGlobe();
+                    updateGlobePin();
+                    focusOnSelectedPin();
+                }, 60);
+            }
         }
 
         function close3DGlobeModal() {
@@ -1614,11 +1902,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 globeCamera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
                 globeCamera.position.set(0, 20, 220);
 
-                // Renderer
-                globeRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-                globeRenderer.setSize(width, height);
-                globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-                container.appendChild(globeRenderer.domElement);
+                // Renderer with graceful fallback
+                try {
+                    globeRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                    globeRenderer.setSize(width, height);
+                    globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                    container.appendChild(globeRenderer.domElement);
+                } catch (e) {
+                    console.warn('WebGL Renderer failed to initialize:', e);
+                    switchViewMode('streetview');
+                    showNotification('3D WebGL is unavailable on this device. Switched to 360° Street View & Satellite Explorer.', 'info');
+                    return;
+                }
 
                 // OrbitControls for Orbit mode
                 if (typeof THREE.OrbitControls !== 'undefined') {
@@ -1800,7 +2095,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
 
-                if (globeRenderer && globeScene && globeCamera) {
+                if (currentViewMode !== 'streetview' && globeRenderer && globeScene && globeCamera) {
                     globeRenderer.render(globeScene, globeCamera);
                 }
             }

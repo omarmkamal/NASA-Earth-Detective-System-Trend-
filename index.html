@@ -187,9 +187,14 @@
                         <div class="selected-location-text">
                             📍 Selected: <span id="selected-location">None — click the map or search</span>
                         </div>
-                        <button id="open-3d-btn" class="globe-3d-btn" title="Open interactive 3D Globe & 360° Orbit View" disabled>
-                            🌐 3D & 360° View
-                        </button>
+                        <div class="location-view-btns">
+                            <button id="open-streetview-btn" class="globe-3d-btn streetview-btn" title="Open 360° Street View & Photospheres of this place">
+                                📷 360° Street View
+                            </button>
+                            <button id="open-3d-btn" class="globe-3d-btn" title="Open interactive 3D Globe & Orbit View">
+                                🌐 3D Globe
+                            </button>
+                        </div>
                     </div>
                 </div>
                 
@@ -453,8 +458,9 @@
                     <p class="modal-location-subtitle" id="globe-modal-subtitle">Exploring selected region</p>
                 </div>
                 <div class="globe-mode-switcher" id="globe-mode-switcher">
-                    <button id="mode-orbit-btn" class="globe-mode-tab active" title="View 3D Earth Globe from Orbit">🌍 Orbit Globe</button>
-                    <button id="mode-inside-btn" class="globe-mode-tab" title="Step inside place as 360° 3D immersive view">🏙️ 360° Inside Place</button>
+                    <button id="mode-streetview-btn" class="globe-mode-tab active" title="Real-world Google Street View 360° & Photospheres">📷 360° Street View</button>
+                    <button id="mode-orbit-btn" class="globe-mode-tab" title="View 3D Earth Globe from Orbit">🌍 3D Orbit Globe</button>
+                    <button id="mode-inside-btn" class="globe-mode-tab" title="Procedural 360° Biome Horizon">🏙️ 360° Biome Horizon</button>
                 </div>
                 <button class="modal-close" id="globe-modal-close" aria-label="Close modal">✕</button>
             </div>
@@ -463,6 +469,32 @@
                     <div id="globe-loading" class="globe-loading">
                         <div class="spinner"></div>
                         <span id="globe-loading-text">Rendering 3D Earth...</span>
+                    </div>
+
+                    <!-- Real 360° Street View & Satellite Explorer Panel -->
+                    <div id="streetview-viewer-panel" class="streetview-viewer-panel">
+                        <div class="streetview-header-bar">
+                            <div class="streetview-place-badge">
+                                <span id="streetview-badge-icon">📍</span>
+                                <span id="streetview-badge-title">360° Street View & Satellite Explorer</span>
+                                <span class="streetview-status-tag" id="streetview-status-tag">Live Satellite & Photosphere View</span>
+                            </div>
+                            <div class="streetview-quick-treks" id="streetview-quick-treks">
+                                <!-- Filled dynamically with quick trek buttons -->
+                            </div>
+                        </div>
+                        <div class="streetview-iframe-wrapper">
+                            <iframe id="streetview-iframe" class="streetview-iframe" src="" allowfullscreen loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="360 Street View and Satellite View"></iframe>
+                            <div id="streetview-loading-overlay" class="streetview-loading-overlay" style="display:none;">
+                                <div class="spinner"></div>
+                                <span id="streetview-loading-text">Loading 360° View of Location...</span>
+                            </div>
+                        </div>
+                        <div class="streetview-info-banner" id="streetview-info-banner">
+                            <div class="streetview-desc" id="streetview-desc">
+                                Exploring 360° real-world views, satellite imagery, and photospheres for this region.
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Atmospheric Dive / Zoom Surface Prompt -->
@@ -495,7 +527,7 @@
                     </div>
                 </div>
                 <div class="globe-controls-bar">
-                    <div class="globe-controls-group">
+                    <div class="globe-controls-group" id="orbit-controls-group" style="display:none;">
                         <button id="mode-toggle-action-btn" class="globe-tool-btn highlight-btn" title="Toggle between Orbit and 360° Inside View">🏙️ Switch to 360° Inside</button>
                         <button id="globe-rotate-btn" class="globe-tool-btn active" title="Toggle 360° Auto-Rotation / Pan">🔄 360° Auto-Pan: ON</button>
                         <button id="globe-focus-btn" class="globe-tool-btn" title="Focus camera on selected pin">📍 Focus Pin</button>
@@ -503,12 +535,13 @@
                         <button id="globe-reset-btn" class="globe-tool-btn" title="Reset Camera View">⟲ Reset Camera</button>
                     </div>
                     <div class="globe-controls-group external-links-group">
-                        <a id="google-streetview-link" href="#" target="_blank" rel="noopener" class="globe-tool-btn streetview-link-btn" title="Open Google Street View 360° Photosphere for this coordinate">📷 Street View 360° ↗</a>
+                        <a id="google-streetview-link" href="#" target="_blank" rel="noopener" class="globe-tool-btn streetview-link-btn" title="Open Google Street View 360° Photosphere for this coordinate">📷 Open 360° Street View ↗</a>
                         <a id="google-earth-link" href="#" target="_blank" rel="noopener" class="globe-tool-btn earth-link-btn" title="Fly to this spot in Google Earth 3D">🌍 Google Earth 3D ↗</a>
+                        <a id="mapillary-streetview-link" href="#" target="_blank" rel="noopener" class="globe-tool-btn mapillary-link-btn" title="Open Mapillary Open 360° Street Photos">📸 Mapillary 360° ↗</a>
                     </div>
                 </div>
                 <div class="globe-hint" id="globe-hint-text">
-                    💡 <strong>Unrestricted 360° Navigation:</strong> Drag to rotate 360°. Scroll or pinch to zoom all the way down to the surface, or click "360° Inside Place" to stand inside!
+                    💡 <strong>Live 360° Street View & Explorer:</strong> Pan and zoom satellite imagery and street viewpoints directly, or click 360° World Treks to jump to iconic panoramic vantage points!
                 </div>
             </div>
         </div>
